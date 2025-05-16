@@ -105,4 +105,3 @@ Or, modify the script to ignore the quarantine path during scanning.
 * GUI using Tkinter, PyQt, or whatever's convenient
 
 ```
----
