@@ -103,5 +103,3 @@ Or, modify the script to ignore the quarantine path during scanning.
 * Real-time file system monitoring
 * Ignore quarantine folder by default
 * GUI using Tkinter, PyQt, or whatever's convenient
-
-```
