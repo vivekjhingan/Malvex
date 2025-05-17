@@ -1,4 +1,4 @@
-````markdown
+
 # Maltector – Simple Signature-Based Antivirus Scanner
 
 Maltector is a lightweight, terminal-based antivirus scanner built in Python. It performs a **signature-based scan** of files in a directory and can **quarantine or delete malicious files** based on known MD5 hashes.
@@ -20,8 +20,6 @@ Maltector is a lightweight, terminal-based antivirus scanner built in Python. It
 - **Supported File Types**:
   - By default: `.exe`, `.py`
   - Unsupported types are scanned but flagged.
-
----
 
 ## Usage
 
