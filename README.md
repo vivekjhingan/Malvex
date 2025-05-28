@@ -17,7 +17,7 @@ MalDefender is a cross-platform, modern antivirus and malware scanner with both 
 1. **Clone the repository:**
 
    ```sh
-   git clone https://github.com/yourusername/maldefender.git
+   git clone https://github.com/Abdul040722/Antivirus-Software.git
    cd maldefender
    ```
 
