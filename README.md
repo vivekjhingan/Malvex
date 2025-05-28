@@ -1,6 +1,6 @@
 # MalDefender
 
-MalDefender Pro is a cross-platform, modern antivirus and malware scanner with both GUI and CLI interfaces. It supports real-time protection, archive scanning, and custom signature management.
+MalDefender is a cross-platform, modern antivirus and malware scanner with both GUI and CLI interfaces. It supports real-time protection, archive scanning, and custom signature management.
 
 ## Features
 
@@ -55,8 +55,8 @@ MalDefender Pro is a cross-platform, modern antivirus and malware scanner with b
 - **Manage Signatures:**  
   Add or remove custom malware signatures directly from the GUI.
 
-- **Configure Real-Time Protection:**  
-  Specify folders to monitor for real-time protection.
+- **Configure Real-Time tection:**  
+  Specify folders to monitor for real-time tection.
 
 ### CLI Mode
 
@@ -72,7 +72,7 @@ MalDefender Pro is a cross-platform, modern antivirus and malware scanner with b
   python run_maldefender.py --add-signature <HASH> --hash-type sha256
   ```
 
-- **Enable Real-Time Protection:**
+- **Enable Real-Time tection:**
 
   ```sh
   python run_maldefender.py --monitor /path/to/folder
@@ -92,7 +92,7 @@ MalDefender Pro is a cross-platform, modern antivirus and malware scanner with b
 
 ### General Tips
 
-- Always run the application with appropriate permissions to access all files and folders you wish to scan.
+- Always run the application with appriate permissions to access all files and folders you wish to scan.
 - For best results, keep your custom signature database up to date.
 
 ## Configuration
@@ -104,11 +104,11 @@ MalDefender Pro is a cross-platform, modern antivirus and malware scanner with b
 ## Dependencies
 
 - Python 3.7+
-- [watchdog](https://pypi.org/project/watchdog/)
-- [rarfile](https://pypi.org/project/rarfile/)
+- [watchdog](https://pypi.org/ject/watchdog/)
+- [rarfile](https://pypi.org/ject/rarfile/)
 - Tkinter (usually included with Python)
 
-## Project Structure
+## ject Structure
 
 ```bash
 run_maldefender.py
@@ -128,7 +128,7 @@ maldefender/
 
 ## Recommendations
 
-- **Do not use MalDefender Pro as your only line of defense.**  
+- **Do not use MalDefender as your only line of defense.**  
   Always use a reputable, up-to-date antivirus solution alongside this tool.
 - **Update your operating system and software regularly** to reduce vulnerabilities.
 - **Be cautious with files from unknown sources.**  
