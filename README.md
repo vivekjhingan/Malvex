@@ -104,8 +104,8 @@ MalDefender is a cross-platform, modern antivirus and malware scanner with both 
 ## Dependencies
 
 - Python 3.7+
-- [watchdog](https://pypi.org/ject/watchdog/)
-- [rarfile](https://pypi.org/ject/rarfile/)
+- [watchdog](https://pypi.org/project/watchdog/)
+- [rarfile](https://pypi.org/project/rarfile/)
 - Tkinter (usually included with Python)
 
 ## ject Structure
