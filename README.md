@@ -1,4 +1,4 @@
-# MalDefender Pro
+# MalDefender
 
 MalDefender Pro is a cross-platform, modern antivirus and malware scanner with both GUI and CLI interfaces. It supports real-time protection, archive scanning, and custom signature management.
 
