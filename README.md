@@ -108,7 +108,7 @@ MalDefender is a cross-platform, modern antivirus and malware scanner with both 
 - [rarfile](https://pypi.org/project/rarfile/)
 - Tkinter (usually included with Python)
 
-## ject Structure
+## Project Structure
 
 ```bash
 run_maldefender.py
