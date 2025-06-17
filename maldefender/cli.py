@@ -12,6 +12,8 @@ from .malware_scanner import MalwareScanner
 
 class CommandLineInterface:
     """Command line interface for headless operation"""
+    asdasdasd
+    
     
     def __init__(self):
         # CLI uses its own logger instance, not tied to GUI callback here
