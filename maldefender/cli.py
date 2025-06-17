@@ -11,9 +11,7 @@ from .malware_scanner import MalwareScanner
 # from .gui import AntivirusGUI # This will be imported in run_maldefender.py if GUI is chosen
 
 class CommandLineInterface:
-    """Command line interface for headless operation"""
-    asdasdasd
-    
+    """Command line interface for headless operation"""    
     
     def __init__(self):
         # CLI uses its own logger instance, not tied to GUI callback here
