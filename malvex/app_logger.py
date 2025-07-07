@@ -21,7 +21,6 @@ class Logger:
                 f.write(log_entry + "\n")
         except Exception as e:
             print(f"Logging error: {e}") # Fallback to print if file logging fails
-        asdasd 
         
         # Send to GUI if available
         if self.gui_callback:
