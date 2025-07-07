@@ -4,6 +4,7 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 from tkinter.font import Font
 import platform
 import threading
+import queue
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Any # Any for item from treeview
@@ -48,7 +49,7 @@ class AntivirusGUI:
 
         # Initialize components
         self.logger = Logger(self.log_to_gui_scrolledtext) # Pass the GUI callback
-        self.scanner = MalwareScanner(self.logger) # Scanner uses the same logger instance
+        self.scanner = MalwareScanner(self.logger, self.prompt_realtime_action)  # Scanner uses the same logger instance and prompt callback
         
         # GUI variables
         self.scan_progress_var = tk.DoubleVar()
@@ -571,6 +572,33 @@ class AntivirusGUI:
             else:
                 messagebox.showerror("Error", "Selected quarantined file no longer exists.")
                 self.refresh_quarantine_list()
+                
+    def prompt_realtime_action(self, file_path: Path, result: Dict) -> str:
+        """Prompt the user for action when a real-time threat is detected."""
+        q = queue.Queue()
+
+        def ask():
+            win = tk.Toplevel(self.root)
+            win.title("Real-Time Threat Detected")
+            ttk.Label(
+                win,
+                text=f"Threat detected:\n{file_path}\nStatus: {result['status'].upper()}\nChoose action:",
+                wraplength=400,
+            ).pack(padx=10, pady=10)
+
+            def choose(action: str):
+                q.put(action)
+                win.destroy()
+
+            btn_frame = ttk.Frame(win)
+            btn_frame.pack(pady=5)
+            ttk.Button(btn_frame, text="Ignore", command=lambda: choose('ignore')).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="Quarantine", command=lambda: choose('quarantine')).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="Delete", command=lambda: choose('delete')).pack(side=tk.LEFT, padx=5)
+            win.grab_set()
+
+        self.root.after(0, ask)
+        return q.get()
 
     def add_signature_gui(self):
         signature = self.sig_entry.get().strip().lower() # Ensure lowercase

@@ -15,8 +15,22 @@ class CommandLineInterface:
     
     def __init__(self):
         # CLI uses its own logger instance, not tied to GUI callback here
-        self.logger = Logger() 
-        self.scanner = MalwareScanner(self.logger)
+        self.logger = Logger()
+        self.scanner = MalwareScanner(self.logger, self.prompt_realtime_action_cli)
+
+    def prompt_realtime_action_cli(self, file_path: Path, result: Dict) -> str:
+        """Prompt user in console for action on real-time threats."""
+        while True:
+            choice = input(
+                f"Threat detected: {file_path} (status: {result['status']}). Action? [i]gnore/[q]uarantine/[d]elete: "
+            ).strip().lower()
+            if choice in {"i", "ignore"}:
+                return "ignore"
+            if choice in {"q", "quarantine"}:
+                return "quarantine"
+            if choice in {"d", "delete"}:
+                return "delete"
+            print("Invalid choice. Please enter i, q, or d.")
     
     def run(self, args: Optional[List[str]] = None): # args can be None if called directly
         """Run CLI commands. Expects sys.argv[1:] or custom list."""
