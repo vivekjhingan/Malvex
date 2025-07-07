@@ -1,4 +1,4 @@
-# run_maldefender.py
+# run_malvex.py
 import sys
 import subprocess
 import os # For checking if running in a virtual environment
@@ -68,7 +68,7 @@ def ensure_packages():
 
 
 def main():
-    """Main entry point for MalDefender."""
+    """Main entry point for Malvex."""
     
     # Step 1: Ensure core Tkinter is available if GUI is a possibility
     # (This is more of a pre-check for a good user experience)
@@ -85,8 +85,8 @@ def main():
 
     # Step 3: Import our application modules (now that packages should be present)
     try:
-        from maldefender.cli import CommandLineInterface
-        from maldefender.app_config import config # For version info or direct config access if needed
+        from malvex.cli import CommandLineInterface
+        from malvex.app_config import config # For version info or direct config access if needed
         # GUI import is conditional
     except ImportError as e:
         print(f"Fatal error: Could not import application components: {e}")
@@ -100,7 +100,7 @@ def main():
             try:
                 # GUI related imports should be here, after package checks.
                 import tkinter as tk # Re-import for clarity in this block
-                from maldefender.gui import AntivirusGUI
+                from malvex.gui import AntivirusGUI
                 
                 root = tk.Tk()
                 app_gui = AntivirusGUI(root)
@@ -147,8 +147,8 @@ def main():
 
 if __name__ == "__main__":
     # For development, you might want to set PYTHONPATH=.
-    # Example: export PYTHONPATH="${PYTHONPATH}:/path/to/maldefender_project"
-    # Or run as a module from parent directory: python -m maldefender_project.run_maldefender --scan .
+    # Example: export PYTHONPATH="${PYTHONPATH}:/path/to/malvex_project"
+    # Or run as a module from parent directory: python -m malvex_project.run_malvex --scan .
     try:
         main()
     except KeyboardInterrupt:

@@ -1,4 +1,4 @@
-# maldefender/app_logger.py
+# malvex/app_logger.py
 from datetime import datetime
 from typing import Callable, Optional
 

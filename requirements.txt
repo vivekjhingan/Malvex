@@ -1,2 +1,4 @@
 watchdog
 rarfile
+yara-python
+pefile

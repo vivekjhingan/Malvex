@@ -1,4 +1,4 @@
-# maldefender/realtime_monitor.py
+# malvex/realtime_monitor.py
 import os
 from pathlib import Path
 from typing import List, Callable, Any

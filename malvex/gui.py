@@ -1,4 +1,4 @@
-# maldefender/gui.py
+# malvex/gui.py
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from tkinter.font import Font
@@ -77,7 +77,7 @@ class AntivirusGUI:
             self.cleanup_and_destroy()
 
     def cleanup_and_destroy(self):
-        self.logger.log("MalDefender GUI closing...")
+        self.logger.log("Malvex GUI closing...")
         if self.scanner.realtime_monitor and config.realtime_enabled:
              # No need to explicitly call stop here if config.realtime_enabled handles it,
              # but good for explicit cleanup if needed.

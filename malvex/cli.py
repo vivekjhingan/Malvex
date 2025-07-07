@@ -1,14 +1,14 @@
-# maldefender/cli.py
+# malvex/cli.py
 import argparse
 import sys
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
-# Relative imports for components within the 'maldefender' package
+# Relative imports for components within the 'malvex' package
 from .app_config import config
 from .app_logger import Logger
 from .malware_scanner import MalwareScanner
-# from .gui import AntivirusGUI # This will be imported in run_maldefender.py if GUI is chosen
+# from .gui import AntivirusGUI # This will be imported in run_malvex.py if GUI is chosen
 
 class CommandLineInterface:
     """Command line interface for headless operation"""    
@@ -55,11 +55,11 @@ class CommandLineInterface:
             "--version", action="version", 
             version=f"{config.app_name} v{config.version}"
         )
-        # --gui flag is handled by run_maldefender.py now.
-        # If no other CLI specific args are given, run_maldefender.py will try to launch GUI.
+        # --gui flag is handled by run_malvex.py now.
+        # If no other CLI specific args are given, run_malvex.py will try to launch GUI.
 
         # Handle case where only script name is run (no args) or --gui is passed
-        # This logic is now primarily in run_maldefender.py
+        # This logic is now primarily in run_malvex.py
         if not args and not sys.stdin.isatty(): # If running non-interactively with no args, show help
             parser.print_help()
             return
@@ -67,7 +67,7 @@ class CommandLineInterface:
         # If args is empty and it's an interactive terminal, it implies GUI should launch (handled by main script)
         # If args are present, parse them.
         if not args and sys.stdin.isatty(): # For interactive, no args means GUI
-            # This path should ideally be handled by the main launcher (run_maldefender.py)
+            # This path should ideally be handled by the main launcher (run_malvex.py)
             # which decides to launch GUI or CLI. If CLI is explicitly run with no args:
             self.logger.log("No CLI arguments provided. For GUI, run without CLI specific commands.", "INFO")
             parser.print_help()
@@ -148,8 +148,8 @@ class CommandLineInterface:
                 self.logger.log(f"Scan path is neither a file nor a directory: {scan_target_path}", "ERROR")
         
         if not action_taken and not (len(args) == 1 and args[0] == "--gui"): # If no specific CLI action was performed by *this* module
-            # This case should ideally be caught by run_maldefender.py to launch GUI
-            # If CLI is explicitly run (e.g. python -m maldefender.cli) with no args:
+            # This case should ideally be caught by run_malvex.py to launch GUI
+            # If CLI is explicitly run (e.g. python -m malvex.cli) with no args:
             self.logger.log("No specific CLI action requested. Use --help for options.", "INFO")
             parser.print_help(sys.stderr) # Print help to stderr if no action
 

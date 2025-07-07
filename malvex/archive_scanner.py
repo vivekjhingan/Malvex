@@ -1,4 +1,4 @@
-# maldefender/archive_scanner.py
+# malvex/archive_scanner.py
 import time
 import shutil
 import zipfile

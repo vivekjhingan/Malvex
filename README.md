@@ -1,6 +1,6 @@
-# MalDefender
+# Malvex
 
-MalDefender is a cross-platform, modern antivirus and malware scanner with both GUI and CLI interfaces. It supports real-time protection, archive scanning, and custom signature management.
+Malvex is a cross-platform, modern antivirus and malware scanner with both GUI and CLI interfaces. It supports real-time protection, archive scanning, and custom signature management.
 
 ## Features
 
@@ -8,6 +8,8 @@ MalDefender is a cross-platform, modern antivirus and malware scanner with both 
 - **Real-time protection** for user-specified folders
 - **Signature-based scanning** (supports MD5 and SHA256)
 - **Archive scanning** (`.zip`, `.rar` supported)
+- **YARA rule detection** for common malicious patterns
+- **Heuristic scoring** based on static file features
 - **Quarantine and restore** for detected threats
 - **Custom signature management** (add your own hashes)
 - **Cross-platform** (Windows, Linux, macOS)
@@ -18,7 +20,7 @@ MalDefender is a cross-platform, modern antivirus and malware scanner with both 
 
    ```sh
    git clone https://github.com/Abdul040722/Antivirus-Software.git
-   cd maldefender
+   cd malvex
    ```
 
 2. **(Optional) Create a virtual environment:**
@@ -31,7 +33,7 @@ MalDefender is a cross-platform, modern antivirus and malware scanner with both 
 3. **Run the application:**
 
    ```sh
-   python run_maldefender.py
+   python run_malvexpy
    ```
 
    The script will check for required dependencies (`watchdog`, `rarfile`) and install them if missing.
@@ -44,7 +46,7 @@ MalDefender is a cross-platform, modern antivirus and malware scanner with both 
   Simply run:
 
   ```sh
-  python run_maldefender.py
+  python run_malvex.py
   ```
 
   The GUI will launch by default if Tkinter is available.
@@ -63,31 +65,31 @@ MalDefender is a cross-platform, modern antivirus and malware scanner with both 
 - **Scan a Directory:**
 
   ```sh
-  python run_maldefender.py --scan /path/to/scan
+  python run_malvex.py --scan /path/to/scan
   ```
 
 - **Add a Signature:**
 
   ```sh
-  python run_maldefender.py --add-signature <HASH> --hash-type sha256
+  python run_malvex.py --add-signature <HASH> --hash-type sha256
   ```
 
 - **Enable Real-Time tection:**
 
   ```sh
-  python run_maldefender.py --monitor /path/to/folder
+  python run_malvex.py --monitor /path/to/folder
   ```
 
 - **Restore from Quarantine:**
 
   ```sh
-  python run_maldefender.py --restore <FILENAME>
+  python run_malvex.py --restore <FILENAME>
   ```
 
 - **View Help:**
 
   ```sh
-  python run_maldefender.py --help
+  python run_malvex.py --help
   ```
 
 ### General Tips
@@ -98,22 +100,24 @@ MalDefender is a cross-platform, modern antivirus and malware scanner with both 
 ## Configuration
 
 - Configuration and logs are stored in:
-  - **Windows:** `%APPDATA%\MalDefender`
-  - **Linux/macOS:** `~/.maldefender`
+  - **Windows:** `%APPDATA%\Malvex`
+  - **Linux/macOS:** `~/.malvex`
 
 ## Dependencies
 
 - Python 3.7+
 - [watchdog](https://pypi.org/project/watchdog/)
 - [rarfile](https://pypi.org/project/rarfile/)
+- [yara-python](https://pypi.org/project/yara-python/)
+- [pefile](https://pypi.org/project/pefile/)
 - Tkinter (usually included with Python)
 
 ## Project Structure
 
 ```bash
-run_maldefender.py
+run_malvex.py
 README.md
-maldefender/
+malvex/
 ├── __init__.py
 ├── app_config.py
 ├── app_logger.py
@@ -128,7 +132,7 @@ maldefender/
 
 ## Recommendations
 
-- **Do not use MalDefender as your only line of defense.**  
+- **Do not use Malvex as your only line of defense.**  
   Always use a reputable, up-to-date antivirus solution alongside this tool.
 - **Update your operating system and software regularly** to reduce vulnerabilities.
 - **Be cautious with files from unknown sources.**  

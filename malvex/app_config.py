@@ -1,4 +1,4 @@
-# maldefender/app_config.py
+# malvex/app_config.py
 import os
 import sys
 import platform
@@ -7,15 +7,15 @@ from pathlib import Path
 
 class Config:
     def __init__(self):
-        self.app_name = "MalDefender Pro"
+        self.app_name = "MalVex Pro"
         self.version = "2.0"
         
         # Paths - OS agnostic
         if platform.system() == "Windows":
-            self.base_dir = Path(os.environ.get('APPDATA', Path.home() / "AppData" / "Roaming")) / "MalDefender"
+            self.base_dir = Path(os.environ.get('APPDATA', Path.home() / "AppData" / "Roaming")) / "MalVex"
         else:
-            self.base_dir = Path.home() / ".maldefender"
-        
+            self.base_dir = Path.home() / ".malvex"
+
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.quarantine_dir = self.base_dir / "quarantine"
         self.signatures_file = self.base_dir / "signatures.json"

@@ -1,4 +1,4 @@
-# maldefender/__init__.py
+# malvex/__init__.py
 from .app_config import config
 from .app_logger import Logger
 from .signature_db import SignatureDatabase

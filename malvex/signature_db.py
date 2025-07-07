@@ -1,4 +1,4 @@
-# maldefender/signature_db.py
+# malvex/signature_db.py
 import json
 from typing import Set, Tuple, Dict
 
