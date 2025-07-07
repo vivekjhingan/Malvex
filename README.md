@@ -20,7 +20,7 @@ Malvex is a cross-platform, modern antivirus and malware scanner with both GUI a
 
    ```sh
    git clone https://github.com/Abdul040722/Antivirus-Software.git
-   cd malvex
+   cd Antivirus-Software
    ```
 
 2. **(Optional) Create a virtual environment:**
@@ -30,13 +30,19 @@ Malvex is a cross-platform, modern antivirus and malware scanner with both GUI a
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
-3. **Run the application:**
+3. **Install dependencies:**
+
+   ```sh
+   pip install -r requirements.txt
+   ```
+
+4. **Run the application:**
 
    ```sh
    python run_malvex.py
    ```
 
-   The script will check for required dependencies (`watchdog`, `rarfile`) and install them if missing.
+   The launcher attempts to install `watchdog` and `rarfile` automatically if they are missing.
 
 ## Usage
 
@@ -57,8 +63,8 @@ Malvex is a cross-platform, modern antivirus and malware scanner with both GUI a
 - **Manage Signatures:**  
   Add or remove custom malware signatures directly from the GUI.
 
-- **Configure Real-Time tection:**  
-  Specify folders to monitor for real-time tection.
+- **Configure Real-Time Protection:**  
+  Specify folders to monitor for real-time protection.
 
 ### CLI Mode
 
@@ -74,16 +80,11 @@ Malvex is a cross-platform, modern antivirus and malware scanner with both GUI a
   python run_malvex.py --add-signature <HASH> --hash-type sha256
   ```
 
-- **Enable Real-Time tection:**
+- **Control Real-Time Protection:**
 
   ```sh
-  python run_malvex.py --monitor /path/to/folder
-  ```
-
-- **Restore from Quarantine:**
-
-  ```sh
-  python run_malvex.py --restore <FILENAME>
+  python run_malvex.py --realtime start
+  python run_malvex.py --realtime stop
   ```
 
 - **View Help:**
@@ -94,13 +95,13 @@ Malvex is a cross-platform, modern antivirus and malware scanner with both GUI a
 
 ### General Tips
 
-- Always run the application with appriate permissions to access all files and folders you wish to scan.
+- Always run the application with appropriate permissions to access all files and folders you wish to scan.
 - For best results, keep your custom signature database up to date.
 
 ## Configuration
 
 - Configuration and logs are stored in:
-  - **Windows:** `%APPDATA%\Malvex`
+  - **Windows:** `%APPDATA%\MalVex`
   - **Linux/macOS:** `~/.malvex`
 
 ## Dependencies
@@ -128,6 +129,9 @@ malvex/
 ├── malware_scanner.py
 ├── realtime_monitor.py
 ├── signature_db.py
+├── static_analyzer.py
+├── yara_scanner.py
+└── yara_rules/
 ```
 
 ## Recommendations
@@ -152,7 +156,7 @@ malvex/
 - Detection is based on static signatures (MD5/SHA256 hashes); it cannot detect unknown or polymorphic malware.
 - Real-time protection is limited to user-specified folders and may not cover all system locations.
 - Archive scanning is supported for `.zip` and `.rar` files only; other formats are not extracted.
-- The application does not provide behavioral or heuristic analysis.
+- The application includes heuristic scanning of executables but does not perform behavioral analysis.
 - Some features (e.g., real-time monitoring) may require additional permissions or dependencies on certain platforms.
 - Password-protected or corrupted archives cannot be scanned.
 - Not a replacement for a professional, fully-featured antivirus solution.
