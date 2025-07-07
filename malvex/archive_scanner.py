@@ -4,7 +4,7 @@ import shutil
 import zipfile
 import rarfile # Ensure rarfile is handled in main installation check
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from .app_config import config
 from .app_logger import Logger
@@ -17,6 +17,26 @@ class ArchiveScanner:
     def __init__(self, logger: Logger, sig_db: SignatureDatabase):
         self.logger = logger
         self.sig_db = sig_db
+
+    def _safe_extract_zip(self, zip_file: zipfile.ZipFile, extract_dir: Path) -> bool:
+        """Safely extract zip archives, preventing path traversal."""
+        for member in zip_file.namelist():
+            member_path = extract_dir / member
+            if not member_path.resolve().startswith(extract_dir.resolve()):
+                self.logger.log(f"Blocked suspicious zip path: {member}", "WARNING")
+                return False
+        zip_file.extractall(extract_dir)
+        return True
+
+    def _safe_extract_rar(self, rar_file: rarfile.RarFile, extract_dir: Path) -> bool:
+        """Safely extract rar archives, preventing path traversal."""
+        for member in rar_file.infolist():
+            member_path = extract_dir / member.filename
+            if not member_path.resolve().startswith(extract_dir.resolve()):
+                self.logger.log(f"Blocked suspicious rar path: {member.filename}", "WARNING")
+                return False
+        rar_file.extractall(extract_dir)
+        return True
     
     def scan_archive(self, archive_path: Path) -> List[Dict]:
         """Scan files inside archives"""
@@ -36,14 +56,16 @@ class ArchiveScanner:
             extracted = False
             if file_suffix_lower == ".zip":
                 with zipfile.ZipFile(archive_path, 'r') as zip_file:
-                    zip_file.extractall(temp_dir)
+                    if not self._safe_extract_zip(zip_file, temp_dir):
+                        return threats
                 extracted = True
             elif file_suffix_lower == ".rar":
                 try:
                     with rarfile.RarFile(archive_path, 'r') as rar_file:
-                        rar_file.extractall(temp_dir)
+                        if not self._safe_extract_rar(rar_file, temp_dir):
+                            return threats
                     extracted = True
-                except rarfile. behöverCAuthenticationError:
+                except rarfile.PasswordRequired:
                     self.logger.log(f"Archive {archive_path} is password protected and cannot be scanned.", "WARNING")
                 except rarfile.RarCannotExec as e: # Handles missing unrar utility
                     self.logger.log(f"Cannot extract RAR {archive_path}. 'unrar' utility might be missing or not in PATH: {e}", "ERROR")

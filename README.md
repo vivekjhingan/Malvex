@@ -33,7 +33,7 @@ Malvex is a cross-platform, modern antivirus and malware scanner with both GUI a
 3. **Run the application:**
 
    ```sh
-   python run_malvexpy
+   python run_malvex.py
    ```
 
    The script will check for required dependencies (`watchdog`, `rarfile`) and install them if missing.
