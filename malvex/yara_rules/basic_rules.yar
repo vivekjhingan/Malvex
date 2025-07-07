@@ -18,7 +18,7 @@ rule SuspiciousStrings {
 
 rule SuspiciousURLs {
     strings:
-        $url = /https?:\\/\\/[\\w\\-\\.]+/ nocase
+        $url = /https?:\/\/[\w.-]+/ nocase
     condition:
         $url
 }
