@@ -8,7 +8,7 @@ from pathlib import Path
 class Config:
     def __init__(self):
         self.app_name = "MalVex Pro"
-        self.version = "2.0"
+        self.version = "2.5"
         
         # Paths - OS agnostic
         if platform.system() == "Windows":
