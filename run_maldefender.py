@@ -100,10 +100,10 @@ def main():
             try:
                 # GUI related imports should be here, after package checks.
                 import tkinter as tk # Re-import for clarity in this block
-                from maldefender.gui import AntivirusGUI
+                from maldefender.gui2 import MalvexGUI
                 
                 root = tk.Tk()
-                app_gui = AntivirusGUI(root)
+                app_gui = MalvexGUI(root)
                 # Logger is initialized within AntivirusGUI
                 app_gui.logger.log(f"{config.app_name} GUI started.", "INFO")
                 if config.realtime_enabled: # Check if config has it enabled by default
