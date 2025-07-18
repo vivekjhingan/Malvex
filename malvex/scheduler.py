@@ -8,14 +8,14 @@ def schedule_scan(time_str, scan_path):
     hour, minute = map(int, time_str.split(":"))
     cron = CronTab(user=True)
 
-    # Absolute path to run_maldefender.py
-    project_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'run_maldefender.py'))
+    # Absolute path to run_malvex.py
+    project_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'run_malvex.py'))
     command = f'python3 {project_path} --scan {scan_path}'
 
     # Remove previous jobs
-    cron.remove_all(comment='maldefender-scan')
+    cron.remove_all(comment='malvex-scan')
 
-    job = cron.new(command=command, comment='maldefender-scan')
+    job = cron.new(command=command, comment='malvex-scan')
     job.minute.on(minute)
     job.hour.on(hour)
     cron.write()

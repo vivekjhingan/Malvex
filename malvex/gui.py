@@ -21,7 +21,7 @@ FONT_HEADER = ("Segoe UI", 14, "bold")
 
 
 class MalvexGUI:
-    def _init_(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(f"{config.app_name} v{config.version}")
         self.root.geometry("980x720")
@@ -40,6 +40,16 @@ class MalvexGUI:
 
         self._build_layout()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def update_realtime_status_display(self):
+        """Refresh real-time protection indicators based on current config."""
+        self.realtime_status.set(config.realtime_enabled)
+        if config.realtime_enabled:
+            self.realtime_label.config(text="Enabled")
+            self.toggle_button.config(text="Disable")
+        else:
+            self.realtime_label.config(text="Disabled")
+            self.toggle_button.config(text="Enable")
 
     def _configure_styles(self):
         self.style.configure("TFrame", background=PRIMARY_BG)
@@ -193,22 +203,19 @@ class MalvexGUI:
         if self.realtime_status.get():
             try:
                 self.scanner.stop_realtime_protection()
-                self.realtime_status.set(False)
-                self.realtime_label.config(text="Disabled")
-                self.toggle_button.config(text="Enable")
                 self.status_bar.config(text="Real-time protection disabled.")
             except Exception as e:
                 self.logger.log(f"Disable failed: {e}", "ERROR")
+            finally:
+                self.update_realtime_status_display()
         else:
             try:
                 self.scanner.start_realtime_protection()
-                self.realtime_status.set(True)
-                self.realtime_label.config(text="Enabled")
-                self.toggle_button.config(text="Disable")
                 self.status_bar.config(text="Real-time protection enabled.")
             except Exception as e:
                 self.logger.log(f"Enable failed: {e}", "ERROR")
-
+            finally:
+                self.update_realtime_status_display()
     def on_close(self):
         if messagebox.askokcancel("Exit Malvex", "Are you sure you want to quit?"):
             self.root.destroy()

@@ -6,7 +6,7 @@ from .file_utils import FileHasher
 from .archive_scanner import ArchiveScanner
 from .realtime_monitor import RealTimeMonitor
 from .malware_scanner import MalwareScanner
-from .gui import AntivirusGUI
+from .gui import MalvexGUI
 from .cli import CommandLineInterface
 
 __all__ = [
@@ -17,6 +17,6 @@ __all__ = [
     "ArchiveScanner",
     "RealTimeMonitor",
     "MalwareScanner",
-    "AntivirusGUI",
+    "MalvexGUI",
     "CommandLineInterface",
 ]

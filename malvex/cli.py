@@ -8,7 +8,7 @@ from typing import Dict, List, Any, Optional
 from .app_config import config
 from .app_logger import Logger
 from .malware_scanner import MalwareScanner
-# from .gui import AntivirusGUI # This will be imported in run_malvex.py if GUI is chosen
+# from .gui import MalvexGUI # This will be imported in run_malvex.py if GUI is chosen
 
 class CommandLineInterface:
     """Command line interface for headless operation"""    

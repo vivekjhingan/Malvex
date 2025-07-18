@@ -1,4 +1,4 @@
-# run_maldefender.py
+# run_malvex.py
 import sys
 import subprocess
 import os # For checking if running in a virtual environment
@@ -85,8 +85,8 @@ def main():
 
     # Step 3: Import our application modules (now that packages should be present)
     try:
-        from maldefender.cli import CommandLineInterface
-        from maldefender.app_config import config # For version info or direct config access if needed
+        from malvex.cli import CommandLineInterface
+        from malvex.app_config import config  # For version info or direct config access if needed
         # GUI import is conditional
     except ImportError as e:
         print(f"Fatal error: Could not import application components: {e}")
@@ -100,11 +100,10 @@ def main():
             try:
                 # GUI related imports should be here, after package checks.
                 import tkinter as tk # Re-import for clarity in this block
-                from maldefender.gui2 import MalvexGUI
-                
+                from malvex.gui import MalvexGUI
                 root = tk.Tk()
                 app_gui = MalvexGUI(root)
-                # Logger is initialized within AntivirusGUI
+                # Logger is initialized within MalvexGUI
                 app_gui.logger.log(f"{config.app_name} GUI started.", "INFO")
                 if config.realtime_enabled: # Check if config has it enabled by default
                     try:
@@ -114,7 +113,7 @@ def main():
                         app_gui.logger.log(f"Failed to auto-start real-time protection: {e}", "ERROR")
                 
                 root.mainloop()
-                # Cleanup is handled by AntivirusGUI.on_closing -> cleanup_and_destroy
+                # Cleanup is handled by MalvexGUI.on_closing -> cleanup_and_destroy
 
             except ImportError as e: # Should not happen if gui_possible is true and ensure_packages worked
                  print(f"Error launching GUI: Required modules missing. {e}")
@@ -147,8 +146,8 @@ def main():
 
 if __name__ == "__main__":
     # For development, you might want to set PYTHONPATH=.
-    # Example: export PYTHONPATH="${PYTHONPATH}:/path/to/maldefender_project"
-    # Or run as a module from parent directory: python -m maldefender_project.run_maldefender --scan .
+    # Example: export PYTHONPATH="${PYTHONPATH}:/path/to/malvex_project"
+    # Or run as a module from parent directory: python -m malvex.run_malvex --scan .
     try:
         main()
     except KeyboardInterrupt:
