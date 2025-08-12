@@ -7,65 +7,48 @@ def running_in_virtualenv():
     """Check if running inside a virtual environment."""
     return (hasattr(sys, 'real_prefix') or
             (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix))
-
 def ensure_packages():
     """Install required packages if not available."""
-    required_packages = ["watchdog", "rarfile"] # tkinter is usually standard
-    
-    # Check if pip is available, especially if not in a venv, user might not want global installs
+    required_packages = ["watchdog", "rarfile"]
+    non_interactive = not sys.stdin.isatty()
+
+    # Ensure pip exists
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("Error: 'pip' command not found or not executable. Please ensure pip is installed and in your PATH.")
-        print("Cannot proceed with automatic package installation.")
-        # Ask user if they want to continue without automatic installation
-        if input("Do you want to attempt to run the application anyway? (y/n): ").lower() != 'y':
+        subprocess.check_call([sys.executable, "-m", "pip", "--version"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        print("Error: pip not available.")
+        if non_interactive:
             sys.exit(1)
-        return # Skip package installation attempt
+        if input("Run anyway without installing deps? (y/n): ").lower() != "y":
+            sys.exit(1)
+        return
 
-    packages_to_install = []
-    for package in required_packages:
+    to_install = []
+    for pkg in required_packages:
         try:
-            __import__(package)
-            print(f"Package '{package}' already installed.")
+            __import__(pkg)
         except ImportError:
-            print(f"Package '{package}' not found.")
-            packages_to_install.append(package)
-            
-    if packages_to_install:
-        print(f"Attempting to install missing packages: {', '.join(packages_to_install)}")
-        # Warn if not in a venv
-        if not running_in_virtualenv():
-            print("\nWARNING: You are not in a Python virtual environment.")
-            print("Installing packages globally can affect other Python projects and system Python.")
-            if input("Are you sure you want to proceed with global installation? (y/n): ").lower() != 'y':
-                print("Installation cancelled by user. Please install packages manually or use a virtual environment.")
-                sys.exit(1)
-        
-        for package in packages_to_install:
-            print(f"Installing {package}...")
-            try:
-                # Using subprocess.run for more control if needed, but check_call is fine for this.
-                subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-                print(f"Successfully installed {package}.")
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to install {package}. Error: {e}")
-                print(f"Please try installing it manually: pip install {package}")
-                if package == "rarfile" and sys.platform != "win32":
-                     print("Note: 'rarfile' may also require the 'unrar' utility to be installed on your system (e.g., via apt, yum, brew).")
-                # Optionally, exit if a critical package fails, or try to continue
-                # For now, we'll let it try to import again later, which will fail more gracefully.
-            except FileNotFoundError: # Should be caught by initial pip check, but good to have.
-                print(f"Error: 'pip' command not found during installation of {package}.")
-                sys.exit(1)
-        # Re-check after installation attempt
-        for package in packages_to_install:
-            try:
-                __import__(package)
-            except ImportError:
-                 print(f"FATAL: Package '{package}' could not be imported even after attempting installation.")
-                 sys.exit(1)
+            to_install.append(pkg)
 
+    if not to_install:
+        return
+
+    if not running_in_virtualenv() and non_interactive:
+        print("Not in venv; refusing global install in non-interactive mode.")
+        sys.exit(1)
+
+    if not running_in_virtualenv() and not non_interactive:
+        print("\nWARNING: Not in a virtual environment.")
+        if input("Proceed with global install? (y/n): ").lower() != "y":
+            sys.exit(1)
+
+    for pkg in to_install:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to install {pkg}: {e}")
+            sys.exit(1)
 
 def main():
     """Main entry point for Malvex."""
