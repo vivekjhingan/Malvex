@@ -2,7 +2,7 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from .app_config import config
 from .app_logger import Logger
@@ -86,6 +86,10 @@ class CommandLineInterface:
             "--version", action="version",
             version=f"{config.app_name} v{config.version}"
         )
+        parser.add_argument(
+            "--behavior", choices=["start", "stop"], 
+            help="Control behavior monitor."
+            )
 
         # Non-interactive + no args → show help and exit early
         if not args and not sys.stdin.isatty():
@@ -132,6 +136,7 @@ class CommandLineInterface:
             if parsed.realtime == "start":
                 self.logger.log("Starting real-time protection...", "INFO")
                 self.scanner.start_realtime_protection()
+                self.scanner.start_behavior_monitor(self._notify_behavior_cli)
                 if config.realtime_enabled:
                     self.logger.log("Real-time protection started.", "INFO")
                 else:
@@ -139,6 +144,7 @@ class CommandLineInterface:
             else:
                 self.logger.log("Stopping real-time protection...", "INFO")
                 self.scanner.stop_realtime_protection()
+                self.scanner.stop_behavior_monitor()
                 self.logger.log("Real-time protection stopped.", "INFO")
 
         # ---- Scanning ----
@@ -221,6 +227,42 @@ class CommandLineInterface:
                     self.logger.log(f"Deleted: {file_path}", "WARNING")
                 else:
                     self.logger.log(f"Failed to delete: {file_path}", "ERROR")
+                    
+    def _notify_behavior_cli(self, incident: Dict[str, Any]) -> None:
+        """CLI prompt when behavior incident fires."""
+        proc = incident.get("process", {})
+        exe = proc.get("exe") or "Unknown"
+        pid = incident.get("pid")
+        score = incident.get("score", 0)
+        reasons = ", ".join([f"{rh['rule_id']}({rh['weight']})" for rh in incident.get("rule_hits", [])])
+
+        self.logger.log(f"\n[BEHAVIOR] Incident score={score} PID={pid} EXE={exe}\n  Rules: {reasons}", "WARNING")
+
+        while True:
+            choice = input("[BEHAVIOR] Action? [K]ill / [Q]uarantine drops / [R]ollback recent / [I]gnore (default=I): ").strip().lower()
+            if choice in {"k", "q", "r", "i", ""}:
+                break
+            print("Please enter K, Q, R, I or Enter for Ignore.")
+
+        try:
+            if choice == "k":
+                try:
+                    import psutil
+                    psutil.Process(int(pid)).kill()
+                    self.logger.log(f"[BEHAVIOR] Killed PID {pid}", "WARNING")
+                except Exception as e:
+                    self.logger.log(f"[BEHAVIOR] Kill failed for PID {pid}: {e}", "ERROR")
+            elif choice == "q":
+                # quarantine recently created executables/scripts
+                cnt = self.scanner.behavior.rollback.rollback() if self.scanner.behavior else 0
+                self.logger.log(f"[BEHAVIOR] Quarantined/removed {cnt} recent files (rollback).", "WARNING")
+            elif choice == "r":
+                cnt = self.scanner.behavior.rollback.rollback() if self.scanner.behavior else 0
+                self.logger.log(f"[BEHAVIOR] Rollback handled {cnt} files.", "WARNING")
+            else:
+                self.logger.log(f"[BEHAVIOR] Ignored incident for PID {pid}", "INFO")
+        except Exception as e:
+            self.logger.log(f"[BEHAVIOR] action error: {e}", "ERROR")
 
     # --------- Output formatting ---------
     def print_scan_result_cli(self, result: Dict) -> None:

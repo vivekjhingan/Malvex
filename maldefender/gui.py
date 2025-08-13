@@ -6,7 +6,7 @@ import platform
 import threading
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import shutil
 import os
 
@@ -522,20 +522,50 @@ class AntivirusGUI:
 
     # ---------- Real-time controls ----------
     def enable_realtime(self):
+        """
+        Enable real-time protection and start the behavioral monitor.
+        Start behavior monitor on success (idempotent), not in the exception block.
+        """
         try:
             self.scanner.start_realtime_protection()
+
+            # Start behavior monitor with GUI notifier (safe if already started)
+            try:
+                self.scanner.start_behavior_monitor(self._notify_behavior_incident_gui)
+            except AttributeError:
+                # MalwareScanner doesn't have behavior methods yet
+                self.logger.log("Behavior monitor integration missing in MalwareScanner.", "ERROR")
+            except Exception as e:
+                self.logger.log(f"Failed to start behavior monitor: {e}", "ERROR")
+
             self.update_realtime_status_display()
             if config.realtime_enabled:
                 messagebox.showinfo("Success", "Real-time protection has been enabled.")
             else:
-                messagebox.showwarning("Real-Time Protection", "Real-time protection could not be started. Check logs and monitored paths.")
+                messagebox.showwarning(
+                    "Real-Time Protection",
+                    "Real-time protection could not be started. Check logs and monitored paths.",
+                )
         except Exception as e:
+            # Do NOT try to start behavior monitor here—startup failed above.
             self.logger.log(f"Failed to enable real-time protection via GUI: {e}", "ERROR")
             messagebox.showerror("Error", f"Failed to enable protection: {e}")
             self.update_realtime_status_display()
 
     def disable_realtime(self):
+        """
+        Stop the behavioral monitor, then disable real-time protection.
+        Stopping behavior first avoids leaving any suspended PIDs if your monitor auto-suspends.
+        """
         try:
+            # Stop behavior monitor first (ignore if not available)
+            try:
+                self.scanner.stop_behavior_monitor()
+            except AttributeError:
+                pass
+            except Exception as e:
+                self.logger.log(f"Failed to stop behavior monitor: {e}", "ERROR")
+
             self.scanner.stop_realtime_protection()
             self.update_realtime_status_display()
             messagebox.showinfo("Success", "Real-time protection has been disabled.")
@@ -543,6 +573,7 @@ class AntivirusGUI:
             self.logger.log(f"Failed to disable real-time protection via GUI: {e}", "ERROR")
             messagebox.showerror("Error", f"Failed to disable protection: {e}")
             self.update_realtime_status_display()
+
 
     def update_realtime_status_display(self):
         if config.realtime_enabled:
@@ -627,6 +658,47 @@ class AntivirusGUI:
 
             # Keep Quarantine tab in sync
             self.refresh_quarantine_list()
+
+        if hasattr(self.root, "after_idle"):
+            self.root.after_idle(_show)
+        else:
+            _show()
+
+    def _notify_behavior_incident_gui(self, incident: Dict[str, Any]) -> None:
+        def _show():
+            proc = incident.get("process", {})
+            exe = proc.get("exe") or "Unknown"
+            pid = incident.get("pid")
+            score = incident.get("score", 0)
+            reasons = "\n".join([f"- {rh['rule_id']}  (weight={rh['weight']})" for rh in incident.get("rule_hits", [])])
+
+            details = f"PID: {pid}\nEXE: {exe}\nScore: {score}\n\nRules:\n{reasons}"
+            # Reuse existing modal choice UX
+            action = self._modal_action_prompt(Path(exe), details)  # returns "quarantine"|"ignore"|"delete"
+            try:
+                import psutil
+                if action == "delete":
+                    # Kill process then rollback
+                    psutil.Process(int(pid)).kill()
+                    cnt = self.scanner.behavior.rollback.rollback() if self.scanner.behavior else 0
+                    self.logger.log(f"[BEHAVIOR] Deleted (killed) PID {pid}; rollback handled {cnt} files.", "WARNING")
+                elif action == "quarantine":
+                    # Suspend already done. Kill gently and rollback to quarantine
+                    try:
+                        psutil.Process(int(pid)).terminate()
+                    except Exception:
+                        pass
+                    cnt = self.scanner.behavior.rollback.rollback() if self.scanner.behavior else 0
+                    self.logger.log(f"[BEHAVIOR] Quarantined/removed {cnt} recent files for PID {pid}.", "WARNING")
+                else:
+                    # Resume if user ignores
+                    try:
+                        psutil.Process(int(pid)).resume()
+                        self.logger.log(f"[BEHAVIOR] Resumed PID {pid} after user ignore.", "INFO")
+                    except Exception:
+                        pass
+            except Exception as e:
+                self.logger.log(f"[BEHAVIOR] GUI action error: {e}", "ERROR")
 
         if hasattr(self.root, "after_idle"):
             self.root.after_idle(_show)
