@@ -9,7 +9,7 @@ def running_in_virtualenv():
             (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix))
 def ensure_packages():
     """Install required packages if not available."""
-    required_packages = ["watchdog", "rarfile"]
+    required_packages = ["watchdog", "rarfile", "yara-python"]
     non_interactive = not sys.stdin.isatty()
 
     # Ensure pip exists

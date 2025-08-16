@@ -38,6 +38,19 @@ class Config:
         # Real-time monitoring
         self.realtime_enabled = False
         self.monitor_paths = [str(Path.home() / "Downloads")]
+
+        # YARA configuration
+        self.yara_enabled: bool = True
+        # Default rules location; can be overridden by user by placing a file at this path
+        self.yara_rules_file = self.base_dir / "yara_rules" / "maldefender_rules.yar"
+        self.yara_max_filesize_mb: int = 64  # per-file soft guard for scanning
+
+        # Ensure rules directory exists (non-fatal if creation fails)
+        try:
+            self.yara_rules_file.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
         
         self.load_config()
 
