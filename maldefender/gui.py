@@ -97,6 +97,47 @@ def _human_size(n: int) -> str:
         i += 1
     return f"{v:.1f} {units[i]}"
 
+class BehaviorModal(tk.Toplevel):
+    def __init__(self, parent: tk.Misc, exe: str, score: int, reasons: str):
+        super().__init__(parent)
+        self.title("Behavioral Incident")
+        self.configure(bg=UITheme.BG1)
+        self.resizable(False, False)
+        self.grab_set()
+        self.result: str = "ignore"
+
+        frm = ttk.Frame(self, padding=12, style="Panel.TFrame")
+        frm.grid(sticky="nsew")
+        ttk.Label(frm, text=f"Behavioral Incident (score={score})", style="H2.TLabel").grid(row=0, column=0, sticky="w")
+        txt = tk.Text(frm, height=10, width=72, bg=UITheme.BG0, fg=UITheme.TEXT,
+                      insertbackground=UITheme.TEXT, relief="flat", wrap="word")
+        txt.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
+        txt.insert("1.0", f"Process: {exe or 'Unknown'}\n\nReasons:\n{reasons}")
+        txt.configure(state="disabled")
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=2, column=0, sticky="e")
+        ttk.Button(btns, text="Kill (Enter)", style="Primary.TButton",
+                   command=lambda: self._close("kill")).grid(row=0, column=0, padx=4)
+        ttk.Button(btns, text="Rollback Recent",
+                   command=lambda: self._close("rollback")).grid(row=0, column=1, padx=4)
+        ttk.Button(btns, text="Ignore (Esc)",
+                   command=lambda: self._close("ignore")).grid(row=0, column=2, padx=4)
+
+        self.bind("<Escape>", lambda e: self._close("ignore"))
+        self.bind("<Return>", lambda e: self._close("kill"))
+
+    def _close(self, res: str):
+        self.result = res
+        self.grab_release()
+        self.destroy()
+
+
+def prompt_behavior(root: tk.Misc, exe: str, score: int, reasons: str) -> str:
+    dlg = BehaviorModal(root, exe, score, reasons)
+    root.wait_window(dlg)
+    return dlg.result
+
 class ThreatModal(tk.Toplevel):
     def __init__(self, parent: tk.Misc, file_path: str, details: str):
         super().__init__(parent)
@@ -520,6 +561,9 @@ class AntivirusGUI:
         try:
             config.monitor_paths = self._rt_paths[:]
             self.scanner.start_realtime_protection()
+            # START behavior monitor + wire FS events from realtime to behavior engine
+            self.scanner.start_behavior_monitor(self._notify_behavior_gui)
+
             self._rt_enabled = True
             self.var_rt_state.set("Enabled"); self.var_rt_chip.set("Real-Time: On")
             if not startup:
@@ -531,6 +575,7 @@ class AntivirusGUI:
     def _disable_rt(self):
         try:
             self.scanner.stop_realtime_protection()
+            self.scanner.stop_behavior_monitor()
         except Exception:
             pass
         self._rt_enabled = False
@@ -596,6 +641,46 @@ class AntivirusGUI:
             self.recent_tv.insert("", 0, values=(str(file_path), result.get("status","infected"), details))
         except Exception as e:
             self.logger.log(f"Real-time UI handling error: {e}", "ERROR")
+
+    def _notify_behavior_gui(self, incident: Dict[str, Any]) -> None:
+        """
+        GUI prompt when the BehaviorEngine emits an incident.
+        The engine has already attempted to suspend the PID; we now let the user decide.
+        """
+        try:
+            proc = incident.get("process", {}) or {}
+            exe = proc.get("exe") or proc.get("name") or "Unknown"
+            score = int(incident.get("score", 0))
+            reasons = "\n".join([f"- {rh.get('rule_id')} ({rh.get('weight')}): {rh.get('reason')}"
+                             for rh in incident.get("rule_hits", [])])
+
+            self.logger.log(f"[BEHAVIOR] Incident score={score} exe={exe}", "WARNING")
+            choice = prompt_behavior(self.root, exe=str(exe), score=score, reasons=reasons)
+
+            if choice == "kill":
+                try:
+                    import psutil
+                    pid = int(incident.get("pid", -1))
+                    if pid > 0:
+                        psutil.Process(pid).kill()
+                        self.logger.log(f"[BEHAVIOR] Killed PID {pid}", "WARNING")
+                except Exception as e:
+                    self.logger.log(f"[BEHAVIOR] Kill failed: {e}", "ERROR")
+            elif choice == "rollback":
+                try:
+                    cnt = self.scanner.behavior.rollback.rollback() if self.scanner.behavior else 0
+                    self.logger.log(f"[BEHAVIOR] Rollback handled {cnt} files.", "WARNING")
+                except Exception as e:
+                    self.logger.log(f"[BEHAVIOR] Rollback error: {e}", "ERROR")
+            else:
+                self.logger.log("[BEHAVIOR] Incident ignored by user.", "INFO")
+
+            # Surface in the dashboard tables
+            details = f"Behavior score={score}; rules={[r.get('rule_id') for r in (incident.get('rule_hits') or [])]}"
+            self.scan_tv.insert("", 0, values=(exe, "behavior_incident", details, choice or "—"))
+            self.recent_tv.insert("", 0, values=(exe, "behavior_incident", details))
+        except Exception as e:
+            self.logger.log(f"Behavior UI handling error: {e}", "ERROR")
 
     # --------------- Quarantine ---------------
     def _q_snapshot(self) -> Dict[str, float]:
