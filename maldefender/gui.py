@@ -1,825 +1,770 @@
-# maldefender/gui.py
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-from tkinter.font import Font
-import platform
-import threading
-from pathlib import Path
-from datetime import datetime
-from typing import List, Dict, Optional, Any
-import shutil
-import os
+"""
+MalDefender — Tk GUI (production)
+Integrates with MalwareScanner, Real-Time monitor, Signature DB, and Quarantine.
 
+Key improvements vs previous GUI:
+- No stubbed detections; uses real MalwareScanner and its real-time callback.
+- Correct SignatureDatabase() construction (no logger argument).
+- Correct RealTime lifecycle via MalwareScanner.start/stop_realtime_protection().
+- Quarantine tab auto-refreshes (polling watcher).
+- Logger routes to UI via gui_callback.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import json
+import time
+import threading
+import queue
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Callable, Iterable, Tuple
+
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+
+# ---- Project imports ----
 from .app_config import config
 from .app_logger import Logger
 from .malware_scanner import MalwareScanner
-from typing import Tuple
+from .signature_db import SignatureDatabase
 
+# ---- UI Theme ----
+class UITheme:
+    BG0 = "#0a0f18"
+    BG1 = "#0f172a"
+    BG2 = "#0b1222"
+    PANEL = "#0c1627"
+    TEXT = "#dbe7ff"
+    MUTED = "#94a3b8"
+    BORDER = "#1e293b"
+    PRI = "#1f6feb"
+    PRI_D = "#1a5cd1"
+    WARN = "#d29922"
+    DANGER = "#f85149"
+    OK = "#22c55e"
+
+    @classmethod
+    def apply(cls, root: tk.Tk):
+        style = ttk.Style(root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        root.configure(bg=cls.BG0)
+        for name, opts in {
+            "TFrame": dict(background=cls.BG0),
+            "Panel.TFrame": dict(background=cls.PANEL, borderwidth=1, relief="solid"),
+            "TLabel": dict(background=cls.BG0, foreground=cls.TEXT),
+            "Dim.TLabel": dict(background=cls.BG0, foreground=cls.MUTED),
+            "H1.TLabel": dict(background=cls.BG0, foreground=cls.TEXT, font=("Segoe UI", 16, "bold")),
+            "H2.TLabel": dict(background=cls.BG0, foreground=cls.TEXT, font=("Segoe UI", 12, "bold")),
+            "TButton": dict(font=("Segoe UI", 10, "bold")),
+            "Primary.TButton": dict(background=cls.PRI, foreground="white"),
+            "Warn.TButton": dict(background=cls.WARN, foreground="black"),
+            "Danger.TButton": dict(background=cls.DANGER, foreground="black"),
+        }.items():
+            style.configure(name, **opts)
+        style.map("TButton", background=[("active", cls.PRI_D)])
+        style.configure("Treeview",
+                        background=cls.BG1, fieldbackground=cls.BG1,
+                        foreground=cls.TEXT, bordercolor=cls.BORDER)
+        style.configure("Treeview.Heading",
+                        background=cls.BG2, foreground=cls.TEXT)
+        style.configure("TProgressbar", background="#58a6ff", troughcolor=cls.BG2)
+
+# ---- Data Models ----
+@dataclass
+class ScanTask:
+    mode: str  # "quick" | "full" | "custom"
+    paths: List[Path]
+    auto_action: str = ""  # "", "quarantine", "delete"
+
+# ---- Helpers ----
+def _human_size(n: int) -> str:
+    try:
+        n = int(n)
+    except Exception:
+        return str(n)
+    units = ["B","KB","MB","GB","TB","PB"]
+    i = 0
+    v = float(n)
+    while v >= 1024 and i < len(units)-1:
+        v /= 1024.0
+        i += 1
+    return f"{v:.1f} {units[i]}"
+
+class ThreatModal(tk.Toplevel):
+    def __init__(self, parent: tk.Misc, file_path: str, details: str):
+        super().__init__(parent)
+        self.title("Threat Detected")
+        self.configure(bg=UITheme.BG1)
+        self.resizable(False, False)
+        self.grab_set()
+        self.result: str = "ignore"
+
+        frm = ttk.Frame(self, padding=12, style="Panel.TFrame")
+        frm.grid(sticky="nsew")
+        ttk.Label(frm, text="Threat Detected", style="H2.TLabel").grid(row=0, column=0, sticky="w")
+        txt = tk.Text(frm, height=10, width=72, bg=UITheme.BG0, fg=UITheme.TEXT,
+                      insertbackground=UITheme.TEXT, relief="flat", wrap="word")
+        txt.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
+        txt.insert("1.0", f"Path: {file_path}\n\nDetails: {details or 'Malicious indicators detected.'}")
+        txt.configure(state="disabled")
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=2, column=0, sticky="e")
+        ttk.Button(btns, text="Quarantine (Enter)", style="Primary.TButton",
+                   command=lambda: self._close("quarantine")).grid(row=0, column=0, padx=4)
+        ttk.Button(btns, text="Ignore (Esc)",
+                   command=lambda: self._close("ignore")).grid(row=0, column=1, padx=4)
+        ttk.Button(btns, text="Delete", style="Danger.TButton",
+                   command=lambda: self._close("delete")).grid(row=0, column=2, padx=4)
+
+        self.bind("<Escape>", lambda e: self._close("ignore"))
+        self.bind("<Return>", lambda e: self._close("quarantine"))
+
+    def _close(self, res: str):
+        self.result = res
+        self.grab_release()
+        self.destroy()
+
+def prompt_threat(root: tk.Misc, file_path: str, details: str) -> str:
+    dlg = ThreatModal(root, file_path, details)
+    root.wait_window(dlg)
+    return dlg.result
+
+# ---- GUI ----
 class AntivirusGUI:
-    """Modern GUI for the antivirus"""
+    """Tk GUI integrating MalwareScanner, Real-Time, Signatures, and Quarantine."""
 
+    # --------------- Lifecycle ---------------
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title(f"{config.app_name} v{config.version}")
-        self.root.minsize(800, 600)
+        self.root.title(f"{config.app_name} GUI")
+        self.root.geometry("1120x720")
+        self.root.minsize(980, 620)
+        UITheme.apply(self.root)
+
+        # Logger → route to GUI
+        self._log_lines: List[str] = []
+        self.logger = Logger(gui_callback=self._on_gui_log)
+
+        # Backends
+        self.scanner = MalwareScanner(self.logger, notify_callback=self._notify_threat_gui)
+        # Use scanner.sig_db and scanner internals rather than creating divergent instances
+        self.sigdb: SignatureDatabase = self.scanner.sig_db  # correct ctor is no-arg
+
+        # UI state/queues/threads
+        self._scan_thread: Optional[threading.Thread] = None
+        self._scan_stop = threading.Event()
+        self._uiq: "queue.Queue[Callable[[], None]]" = queue.Queue()
+
+        # Real-time state
+        self._rt_enabled = bool(config.realtime_enabled)
+        self._rt_paths: List[str] = list(config.monitor_paths or [])
+        if not self._rt_paths:
+            # default to Downloads once
+            self._rt_paths = [str(Path.home() / "Downloads")]
+            config.monitor_paths = self._rt_paths[:]
+            config.save_config()
+
+        # Quarantine watcher
+        self._q_stop = threading.Event()
+        self._q_thread: Optional[threading.Thread] = None
+        self._q_last_snapshot: Dict[str, float] = {}
+
+        # Build UI
+        self._build_ui()
+
+        # start UI pump
+        self._pump_ui()
+
+        # initial states
+        if self._rt_enabled:
+            self._enable_rt(startup=True)
+
+        self.logger.log("GUI loaded.", "INFO")
+
+    def destroy(self):
         try:
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
-            w, h = 900, 700
-            x = (screen_width // 2) - (w // 2)
-            y = (screen_height // 2) - (h // 2)
-            self.root.geometry(f"{w}x{h}+{x}+{y}")
-        except tk.TclError:
-            self.root.geometry("900x700")
-
-        # Style
-        self.style = ttk.Style()
-        self.style.theme_use('clam')
-        self.style.configure("TFrame", background="#f0f0f0")
-        self.style.configure("TLabel", background="#f0f0f0", font=("Arial", 10))
-        self.style.configure("TButton", font=("Arial", 10, "bold"), padding=5)
-        self.style.configure("Header.TLabel", font=("Arial", 16, "bold"), foreground="#333")
-        self.style.configure("Treeview.Heading", font=("Arial", 10, "bold"))
-        self.style.configure("Red.TLabel", foreground="red", background="#f0f0f0")
-        self.style.configure("Green.TLabel", foreground="green", background="#f0f0f0")
-
-        # Components
-        self.logger = Logger(self.log_to_gui_scrolledtext)
-        self.scanner = MalwareScanner(self.logger)
-
-        # GUI vars
-        self.scan_progress_var = tk.DoubleVar()
-        self.realtime_status_var = tk.StringVar(value="Initializing...")
-        self.current_scan_path_var = tk.StringVar(value="N/A")
-        self.scan_thread: Optional[threading.Thread] = None
-        self.scanner = MalwareScanner(self.logger)
-        self.scanner.notify_threat = self._notify_threat_from_realtime  # NEW
-
-
-        self.setup_gui()
-        self.update_realtime_status_display()
-        self.load_initial_logs()
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-
-    # ---------- Window lifecycle ----------
-    def on_closing(self):
-        if self.scan_thread and self.scan_thread.is_alive():
-            if messagebox.askyesno("Scan in Progress", "A scan is currently in progress. Are you sure you want to exit?"):
-                self.scanner.scanning = False
-                if self.scan_thread:
-                    self.scan_thread.join(timeout=2)
-                self.cleanup_and_destroy()
-            else:
-                return
-        else:
-            self.cleanup_and_destroy()
-
-    def cleanup_and_destroy(self):
-        self.logger.log("MalDefender GUI closing...")
-        # If needed, explicit stop of realtime can be added here.
-        self.root.destroy()
-
-    def load_initial_logs(self):
-        if config.log_file.exists():
-            try:
-                with open(config.log_file, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                    for line in lines[-100:]:
-                        self.log_text.insert(tk.END, line)
-                self.log_text.see(tk.END)
-            except Exception as e:
-                self.logger.log(f"Could not load initial logs: {e}", "ERROR")
-
-    # ---------- Layout ----------
-    def setup_gui(self):
-        main_frame = ttk.Frame(self.root, padding="10 10 10 10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        title_label = ttk.Label(main_frame, text=config.app_name, style="Header.TLabel")
-        title_label.pack(pady=(0, 20), anchor="center")
-
-        notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill=tk.BOTH, expand=True)
-
-        # Scan
-        scan_frame = ttk.Frame(notebook, padding="10")
-        notebook.add(scan_frame, text=" Scanner ")
-        self.setup_scan_tab(scan_frame)
-
-        # Real-time
-        realtime_frame = ttk.Frame(notebook, padding="10")
-        notebook.add(realtime_frame, text=" Real-Time Protection ")
-        self.setup_realtime_tab(realtime_frame)
-
-        # Quarantine
-        quarantine_frame = ttk.Frame(notebook, padding="10")
-        notebook.add(quarantine_frame, text=" Quarantine ")
-        self.setup_quarantine_tab(quarantine_frame)
-
-        # Settings
-        settings_frame = ttk.Frame(notebook, padding="10")
-        notebook.add(settings_frame, text=" Settings ")
-        self.setup_settings_tab(settings_frame)
-
-        # Logs
-        log_frame = ttk.Frame(notebook, padding="10")
-        notebook.add(log_frame, text=" Logs ")
-        self.setup_log_tab(log_frame)
-
-    def setup_scan_tab(self, parent: ttk.Frame):
-        options_frame = ttk.LabelFrame(parent, text="Scan Options", padding="10")
-        options_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Button(options_frame, text="Quick Scan (Downloads)", command=self.quick_scan).pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
-        ttk.Button(options_frame, text="Full System Scan", command=self.full_scan).pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
-        ttk.Button(options_frame, text="Custom Scan...", command=self.custom_scan).pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
-        ttk.Button(options_frame, text="Stop Scan", command=self.stop_scan).pack(side=tk.LEFT, padx=5, pady=5, fill=tk.X, expand=True)
-
-        progress_frame = ttk.LabelFrame(parent, text="Scan Progress", padding="10")
-        progress_frame.pack(fill=tk.X, pady=5)
-
-        self.scan_status_label = ttk.Label(progress_frame, text="Status: Ready to scan.")
-        self.scan_status_label.pack(pady=(0, 5), anchor="w")
-
-        self.current_file_label = ttk.Label(progress_frame, textvariable=self.current_scan_path_var, wraplength=700)
-        self.current_file_label.pack(pady=(0, 5), anchor="w", fill=tk.X)
-
-        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.scan_progress_var, length=400)
-        self.progress_bar.pack(fill=tk.X, padx=5, pady=5)
-
-        results_frame = ttk.LabelFrame(parent, text="Scan Results", padding="10")
-        results_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        columns = ("File", "Path", "Status", "Details")
-        self.results_tree = ttk.Treeview(results_frame, columns=columns, show="headings")
-
-        self.results_tree.heading("File", text="File Name")
-        self.results_tree.column("File", width=150, anchor=tk.W)
-        self.results_tree.heading("Path", text="Full Path / Archive Location")
-        self.results_tree.column("Path", width=300, anchor=tk.W)
-        self.results_tree.heading("Status", text="Status")
-        self.results_tree.column("Status", width=100, anchor=tk.W)
-        self.results_tree.heading("Details", text="Details (e.g., Hash Type)")
-        self.results_tree.column("Details", width=150, anchor=tk.W)
-
-        scrollbar_y = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.results_tree.yview)
-        scrollbar_x = ttk.Scrollbar(results_frame, orient=tk.HORIZONTAL, command=self.results_tree.xview)
-        self.results_tree.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
-
-        scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
-        scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
-        self.results_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-    def setup_realtime_tab(self, parent: ttk.Frame):
-        status_frame = ttk.LabelFrame(parent, text="Protection Status", padding="10")
-        status_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(status_frame, text="Real-time Protection:").pack(side=tk.LEFT, padx=5)
-        self.realtime_status_display_label = ttk.Label(status_frame, textvariable=self.realtime_status_var)
-        self.realtime_status_display_label.pack(side=tk.LEFT, padx=5)
-
-        controls_frame = ttk.LabelFrame(parent, text="Controls", padding="10")
-        controls_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Button(controls_frame, text="Enable Protection", command=self.enable_realtime).pack(side=tk.LEFT, padx=5, pady=5)
-        ttk.Button(controls_frame, text="Disable Protection", command=self.disable_realtime).pack(side=tk.LEFT, padx=5, pady=5)
-
-        paths_frame = ttk.LabelFrame(parent, text="Monitored Paths", padding="10")
-        paths_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        self.paths_listbox = tk.Listbox(paths_frame, height=5, selectmode=tk.SINGLE)
-        self.paths_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        path_buttons_frame = ttk.Frame(paths_frame)
-        path_buttons_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
-
-        ttk.Button(path_buttons_frame, text="Add Path...", command=self.add_monitor_path).pack(side=tk.LEFT, padx=5)
-        ttk.Button(path_buttons_frame, text="Remove Selected Path", command=self.remove_monitor_path).pack(side=tk.LEFT, padx=5)
-
-        self.update_paths_listbox()
-
-    def setup_quarantine_tab(self, parent: ttk.Frame):
-        list_frame = ttk.LabelFrame(parent, text="Quarantined Files", padding="10")
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        columns = ("File", "Original Path Hint", "Date Quarantined", "Size")
-        self.quarantine_tree = ttk.Treeview(list_frame, columns=columns, show="headings")
-
-        self.quarantine_tree.heading("File", text="Quarantined File Name")
-        self.quarantine_tree.column("File", width=250, anchor=tk.W)
-        self.quarantine_tree.heading("Original Path Hint", text="Original Path (if known)")
-        self.quarantine_tree.column("Original Path Hint", width=200, anchor=tk.W)
-        self.quarantine_tree.heading("Date Quarantined", text="Date Quarantined")
-        self.quarantine_tree.column("Date Quarantined", width=150, anchor=tk.W)
-        self.quarantine_tree.heading("Size", text="Size")
-        self.quarantine_tree.column("Size", width=100, anchor=tk.E)
-
-        q_scrollbar_y = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.quarantine_tree.yview)
-        q_scrollbar_x = ttk.Scrollbar(list_frame, orient=tk.HORIZONTAL, command=self.quarantine_tree.xview)
-        self.quarantine_tree.configure(yscrollcommand=q_scrollbar_y.set, xscrollcommand=q_scrollbar_x.set)
-
-        q_scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
-        q_scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
-        self.quarantine_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        q_controls_frame = ttk.Frame(parent, padding="5 0 0 0")
-        q_controls_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Button(q_controls_frame, text="Refresh List", command=self.refresh_quarantine_list).pack(side=tk.LEFT, padx=5)
-        ttk.Button(q_controls_frame, text="Restore Selected...", command=self.restore_from_quarantine).pack(side=tk.LEFT, padx=5)
-        ttk.Button(q_controls_frame, text="Delete Selected Permanently", command=self.delete_from_quarantine).pack(side=tk.LEFT, padx=5)
-
-        self.refresh_quarantine_list()
-
-    def setup_settings_tab(self, parent: ttk.Frame):
-        sig_frame = ttk.LabelFrame(parent, text="Signature Management", padding="10")
-        sig_frame.pack(fill=tk.X, pady=5, anchor="n")
-
-        add_sig_frame = ttk.Frame(sig_frame)
-        add_sig_frame.pack(fill=tk.X, pady=5)
-
-        ttk.Label(add_sig_frame, text="Signature (Hash):").pack(side=tk.LEFT, padx=(0, 5))
-        self.sig_entry = ttk.Entry(add_sig_frame, width=50)
-        self.sig_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-
-        self.hash_type_var = tk.StringVar(value="SHA256")
-        hash_combo = ttk.Combobox(add_sig_frame, textvariable=self.hash_type_var, values=["MD5", "SHA256"], width=8, state="readonly")
-        hash_combo.pack(side=tk.LEFT, padx=5)
-
-        ttk.Button(sig_frame, text="Add Signature to Database", command=self.add_signature_gui).pack(pady=5, anchor="e")
-
-        stats_frame = ttk.LabelFrame(parent, text="Scan Statistics (Last Scan)", padding="10")
-        stats_frame.pack(fill=tk.X, pady=5, anchor="n")
-
-        self.stats_display_label = ttk.Label(stats_frame, text="No scans performed in this session yet.", justify=tk.LEFT)
-        self.stats_display_label.pack(padx=5, pady=5, anchor="w")
-        self.update_scan_statistics_display()
-
-    def setup_log_tab(self, parent: ttk.Frame):
-        self.log_text = scrolledtext.ScrolledText(parent, height=15, wrap=tk.WORD, state=tk.DISABLED)
-        self.log_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.log_text.tag_configure("ERROR", foreground="red")
-        self.log_text.tag_configure("WARNING", foreground="orange")
-        self.log_text.tag_configure("INFO", foreground="black")
-        self.log_text.tag_configure("DEBUG", foreground="gray")
-
-    # ---------- Logging callback ----------
-    def log_to_gui_scrolledtext(self, message: str, level: str):
-        """Thread-safe callback for log messages to GUI"""
-        def _update_log_text():
-            if self.log_text.winfo_exists():
-                self.log_text.config(state=tk.NORMAL)
-                self.log_text.insert(tk.END, message + "\n", level.upper())
-                self.log_text.config(state=tk.DISABLED)
-                self.log_text.see(tk.END)
-
-        if hasattr(self.root, "after_idle"):
-            self.root.after_idle(_update_log_text)
-
-    # ---------- Scanning ----------
-    def _start_scan(self, scan_path: Path, scan_type_name: str):
-        if self.scan_thread and self.scan_thread.is_alive():
-            messagebox.showwarning("Scan in Progress", "A scan is already in progress. Please wait or stop it.")
-            return
-
-        if not scan_path.exists():
-            messagebox.showerror("Error", f"Scan path does not exist: {scan_path}")
-            return
-
-        self.logger.log(f"Starting {scan_type_name} on: {scan_path}", "INFO")
-        self.results_tree.delete(*self.results_tree.get_children())
-        self.scan_progress_var.set(0)
-        self.current_scan_path_var.set("Initializing scan...")
-        self.scan_status_label.config(text=f"Status: {scan_type_name} started...")
-
-        self.scan_thread = threading.Thread(target=self.perform_scan_and_update_gui, args=(scan_path,), daemon=True)
-        self.scan_thread.start()
-
-    def quick_scan(self):
-        downloads_path = Path.home() / "Downloads"
-        self._start_scan(downloads_path, "Quick Scan")
-
-    def full_scan(self):
-        if platform.system() == "Windows":
-            scan_path = Path(os.environ.get("USERPROFILE", "C:\\Users"))
-            if not scan_path.exists():
-                scan_path = Path("C:\\")
-        else:
-            scan_path = Path.home()
-
-        if messagebox.askyesno("Full Scan Confirmation",
-                               f"Full system scan will target: {scan_path}\nThis may take a significant amount of time. Continue?"):
-            self._start_scan(scan_path, "Full System Scan")
-
-    def custom_scan(self):
-        path_str = filedialog.askdirectory(title="Select Folder to Scan")
-        if path_str:
-            self._start_scan(Path(path_str), "Custom Scan")
-
-    def stop_scan(self):
-        if self.scan_thread and self.scan_thread.is_alive():
-            if messagebox.askyesno("Stop Scan", "Are you sure you want to stop the current scan?"):
-                self.scanner.scanning = False
-                self.scan_status_label.config(text="Status: Scan stopping...")
-                self.logger.log("User requested scan stop.", "INFO")
-        else:
-            messagebox.showinfo("Stop Scan", "No scan is currently in progress.")
-
-    def perform_scan_and_update_gui(self, scan_path: Path):
-        """Performs the scan and updates GUI elements safely."""
-        def progress_callback_gui(progress: float, current_file_display: str):
-            if not self.root.winfo_exists(): return
-            self.root.after_idle(lambda: self.scan_progress_var.set(progress))
-            self.root.after_idle(lambda: self.current_scan_path_var.set(f"Scanning: {current_file_display}"))
-
-        # NOTE: pass-through auto_action is intentionally None; we want to PROMPT after scan
-        results = self.scanner.scan_directory(scan_path, progress_callback_gui, auto_action=None)
-
-        if not self.root.winfo_exists():
-            return
-        self.root.after_idle(self.update_scan_results_tree, results)
-        self.root.after_idle(self.update_scan_statistics_display)
-        self.root.after_idle(lambda: self.scan_status_label.config(text="Status: Scan completed."))
-        self.root.after_idle(lambda: self.current_scan_path_var.set(f"Completed scan of: {scan_path}"))
-        self.root.after_idle(lambda: self.scan_progress_var.set(100))
-        self.scanner.scanning = False
-
-        # NEW: Prompt for action(s) AFTER scan completes
-        self.root.after_idle(lambda: self._prompt_actions_after_scan(results))
-    
-    def _prompt_actions_after_scan(self, results: List[Dict]):
-        """Iterate infected results and prompt user for Quarantine / Delete / Ignore."""
-        infected_items: List[Tuple[Path, Dict]] = []
-        for r in results:
-            if r.get("status") == "infected":
-                infected_items.append((Path(str(r["file"])), r))
-
-        if not infected_items:
-            return
-
-        for file_path, r in infected_items:
-            # If this was an archive detection with nested threats, we act on the archive itself.
-            is_archive = file_path.suffix.lower() in config.archive_types
-
-            # Build message
-            details_lines = []
-            if is_archive:
-                details_lines.append(f"Threats found in archive: {file_path.name}")
-                for t in r.get("threats", []):
-                    ht = t.get("hash_types") or [t.get("hash_type", "N/A")]
-                    if not isinstance(ht, list): ht = [ht]
-                    details_lines.append(f"  - {t.get('file')}  |  Type(s): {', '.join(ht)}")
-            else:
-                t = (r.get("threats") or [{}])[0]
-                ht = t.get("hash_types") or [t.get("hash_type", "N/A")]
-                if not isinstance(ht, list): ht = [ht]
-                details_lines.append(f"Threat: {file_path.name}  |  Type(s): {', '.join(ht)}")
-
-            details_text = "\n".join(details_lines)
-            action = self._modal_action_prompt(file_path, details_text)
-            if action == "quarantine":
-                ok, msg = self.scanner.quarantine_path(file_path)
-                if ok:
-                    self.logger.log(f"User quarantined: {file_path}", "WARNING")
-                else:
-                    self.logger.log(f"Quarantine failed: {file_path} ({msg})", "ERROR")
-            elif action == "delete":
-                ok, msg = self.scanner.delete_path(file_path)
-                if ok:
-                    self.logger.log(f"User deleted: {file_path}", "WARNING")
-                else:
-                    self.logger.log(f"Delete failed: {file_path} ({msg})", "ERROR")
-            else:
-                self.logger.log(f"User ignored: {file_path}", "INFO")
-
-        # refresh quarantine tab in case items moved
-        self.refresh_quarantine_list()
-        # and refresh results tree styling (some files may have been moved/deleted)
-        self.update_scan_results_tree(results)
-
-    def _modal_action_prompt(self, file_path: Path, details_text: str) -> str:
-        """
-        Show a modal dialog with details and 3 buttons: Quarantine, Ignore, Delete.
-        Returns one of {"quarantine","ignore","delete"}.
-        """
-        win = tk.Toplevel(self.root)
-        win.title("Threat Detected")
-        win.transient(self.root)
-        win.grab_set()
-        win.resizable(False, False)
-
-        ttk.Label(win, text="Threat Detected", style="Header.TLabel").pack(padx=16, pady=(12, 8), anchor="w")
-        msg = tk.Text(win, width=80, height=10, wrap=tk.WORD)
-        msg.insert("1.0", f"Path: {file_path}\n\n{details_text}")
-        msg.config(state=tk.DISABLED)
-        msg.pack(padx=16, pady=(0, 12))
-
-        choice = {"val": "ignore"}  # default
-
-        btns = ttk.Frame(win)
-        btns.pack(padx=16, pady=(0, 12), fill=tk.X)
-
-        def _choose(val: str):
-            choice["val"] = val
-            win.destroy()
-
-        q_btn = ttk.Button(btns, text="Quarantine", command=lambda: _choose("quarantine"))
-        i_btn = ttk.Button(btns, text="Ignore", command=lambda: _choose("ignore"))
-        d_btn = ttk.Button(btns, text="Delete", command=lambda: _choose("delete"))
-        q_btn.pack(side=tk.LEFT, padx=(0, 8))
-        i_btn.pack(side=tk.LEFT, padx=(0, 8))
-        d_btn.pack(side=tk.LEFT, padx=(0, 8))
-
-        # Enter/Escape bindings
-        win.bind("<Return>", lambda _e: _choose("quarantine"))
-        win.bind("<Escape>", lambda _e: _choose("ignore"))
-
-        # Center over root
+            self._q_stop.set()
+            if self._q_thread:
+                self._q_thread.join(timeout=1.5)
+        except Exception:
+            pass
         try:
-            win.update_idletasks()
-            rw = self.root.winfo_rootx()
-            rh = self.root.winfo_rooty()
-            rw2 = self.root.winfo_width()
-            rh2 = self.root.winfo_height()
-            ww = win.winfo_width()
-            wh = win.winfo_height()
-            x = rw + (rw2 - ww)//2
-            y = rh + (rh2 - wh)//2
-            win.geometry(f"+{x}+{y}")
+            self.scanner.stop_realtime_protection()
         except Exception:
             pass
 
-        win.wait_window()
-        return choice["val"]
-
-
-    def update_scan_results_tree(self, results: List[Dict]):
-        """Update scan results in GUI Treeview."""
-        self.results_tree.delete(*self.results_tree.get_children())
-
-        for result in results:
-            file_full_path = Path(result["file"])
-            file_name = file_full_path.name
-            status = result["status"].upper()
-
-            if result["status"] == "infected":
-                status_tag = "infected"
-                if result.get("threats"):
-                    # Non-archive file infection
-                    if file_full_path.suffix.lower() not in config.archive_types:
-                        threat_info = result["threats"][0]
-                        ht = threat_info.get("hash_types") or [threat_info.get("hash_type", "N/A")]
-                        if not isinstance(ht, list):
-                            ht = [ht]
-                        details = f"Type(s): {', '.join(ht)} Match"
-                        self.results_tree.insert(
-                            "", tk.END,
-                            values=(file_name, str(file_full_path), status, details),
-                            tags=(status_tag,)
-                        )
-                    # Archive infection(s)
-                    else:
-                        self.results_tree.insert(
-                            "", tk.END,
-                            values=(file_name, str(file_full_path), f"{status} (Contains Threats)", "See below"),
-                            tags=(status_tag,)
-                        )
-                        for threat_in_archive in result["threats"]:
-                            ht = threat_in_archive.get("hash_types") or [threat_in_archive.get("hash_type", "N/A")]
-                            if not isinstance(ht, list):
-                                ht = [ht]
-                            details_archive = (
-                                f"Inside {file_name}: {threat_in_archive.get('file')}, "
-                                f"Type(s): {', '.join(ht)}"
-                            )
-                            self.results_tree.insert(
-                                "", tk.END,
-                                values=(f"↳ {threat_in_archive.get('file')}",
-                                        str(file_full_path), "THREAT INSIDE", details_archive),
-                                tags=("infected", "sub_item")
-                            )
-            elif result["status"] not in {"clean", "skipped_in_quarantine", "skipped_not_file"}:
-                status_tag = "error"
-                details = result.get("action_taken") or "Error during scan"
-                self.results_tree.insert("", tk.END,
-                    values=(file_name, str(file_full_path), status, details), tags=(status_tag,))
-
-        self.results_tree.tag_configure("infected", foreground="red")
-        self.results_tree.tag_configure("error", foreground="orange")
-        self.results_tree.tag_configure("sub_item", foreground="#555555")
-
-    def update_scan_statistics_display(self):
-        """Update the statistics label in the Settings tab."""
-        stats = self.scanner.scan_stats
-        stats_text = (
-            f"Files Scanned: {stats['files_scanned']}\n"
-            f"Threats Found: {stats['threats_found']}\n"
-            f"Archives Scanned: {stats['archives_scanned']}\n"
-            f"Scan Errors: {stats['errors']}"
-        )
-        if hasattr(self, 'stats_display_label'):
-            self.stats_display_label.config(text=stats_text)
-
-    # ---------- Real-time controls ----------
-    def enable_realtime(self):
-        """
-        Enable real-time protection and start the behavioral monitor.
-        Start behavior monitor on success (idempotent), not in the exception block.
-        """
+    # --------------- Logging ---------------
+    def _on_gui_log(self, line: str, level: str):
+        # line already formatted by Logger
         try:
-            self.scanner.start_realtime_protection()
+            self._log_lines.append(line)
+            if len(self._log_lines) > 4000:
+                self._log_lines = self._log_lines[-4000:]
+            self._uiq.put(lambda: self._append_log(line))
+        except Exception:
+            pass
 
-            # Start behavior monitor with GUI notifier (safe if already started)
-            try:
-                self.scanner.start_behavior_monitor(self._notify_behavior_incident_gui)
-            except AttributeError:
-                # MalwareScanner doesn't have behavior methods yet
-                self.logger.log("Behavior monitor integration missing in MalwareScanner.", "ERROR")
-            except Exception as e:
-                self.logger.log(f"Failed to start behavior monitor: {e}", "ERROR")
-
-            self.update_realtime_status_display()
-            if config.realtime_enabled:
-                messagebox.showinfo("Success", "Real-time protection has been enabled.")
-            else:
-                messagebox.showwarning(
-                    "Real-Time Protection",
-                    "Real-time protection could not be started. Check logs and monitored paths.",
-                )
-        except Exception as e:
-            # Do NOT try to start behavior monitor here—startup failed above.
-            self.logger.log(f"Failed to enable real-time protection via GUI: {e}", "ERROR")
-            messagebox.showerror("Error", f"Failed to enable protection: {e}")
-            self.update_realtime_status_display()
-
-    def disable_realtime(self):
-        """
-        Stop the behavioral monitor, then disable real-time protection.
-        Stopping behavior first avoids leaving any suspended PIDs if your monitor auto-suspends.
-        """
+    def _append_log(self, s: str):
         try:
-            # Stop behavior monitor first (ignore if not available)
-            try:
-                self.scanner.stop_behavior_monitor()
-            except AttributeError:
-                pass
-            except Exception as e:
-                self.logger.log(f"Failed to stop behavior monitor: {e}", "ERROR")
+            self.txt_log.insert("end", s + "\n")
+            self.txt_log.see("end")
+        except Exception:
+            pass
 
-            self.scanner.stop_realtime_protection()
-            self.update_realtime_status_display()
-            messagebox.showinfo("Success", "Real-time protection has been disabled.")
-        except Exception as e:
-            self.logger.log(f"Failed to disable real-time protection via GUI: {e}", "ERROR")
-            messagebox.showerror("Error", f"Failed to disable protection: {e}")
-            self.update_realtime_status_display()
+    # --------------- UI Build ---------------
+    def _build_ui(self):
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=10, pady=10)
+        self.nb = nb
 
+        self._tab_dashboard(nb)
+        self._tab_scan(nb)
+        self._tab_realtime(nb)
+        self._tab_quarantine(nb)
+        self._tab_signatures(nb)
+        self._tab_logs(nb)
 
-    def update_realtime_status_display(self):
-        if config.realtime_enabled:
-            self.realtime_status_var.set("✅ Enabled")
-            if hasattr(self, 'realtime_status_display_label'):
-                self.realtime_status_display_label.config(style="Green.TLabel")
-        else:
-            self.realtime_status_var.set("❌ Disabled")
-            if hasattr(self, 'realtime_status_display_label'):
-                self.realtime_status_display_label.config(style="Red.TLabel")
+    def _tab_dashboard(self, nb):
+        f = ttk.Frame(nb); nb.add(f, text="Dashboard")
 
-    def add_monitor_path(self):
-        path_str = filedialog.askdirectory(title="Select Folder to Monitor for Real-Time Protection")
-        if path_str:
-            path_to_add = str(Path(path_str).resolve())
-            if path_to_add not in config.monitor_paths:
-                config.monitor_paths.append(path_to_add)
-                config.save_config()
-                self.update_paths_listbox()
-                self.logger.log(f"Added monitoring path: {path_to_add}", "INFO")
+        status = ttk.Frame(f, padding=10, style="Panel.TFrame")
+        status.pack(fill="x", pady=(0, 10))
+        ttk.Label(status, text="Protection Status", style="H2.TLabel").pack(anchor="w")
+        row = ttk.Frame(status); row.pack(fill="x", pady=(6, 0))
+        self.var_rt_chip = tk.StringVar(value="Real-Time: On" if self._rt_enabled else "Real-Time: Off")
+        ttk.Label(row, textvariable=self.var_rt_chip, style="Dim.TLabel").pack(side="left")
+        ttk.Button(row, text="Manage", style="Primary.TButton",
+                   command=lambda: self.nb.select(self._rt_tab)).pack(side="right")
 
-                if config.realtime_enabled:
-                    messagebox.showinfo("Real-Time Protection", "Restarting real-time protection to apply new path.")
-                    self.scanner.start_realtime_protection()
-                    self.update_realtime_status_display()
-            else:
-                messagebox.showinfo("Info", "Path already in monitoring list.")
+        card = ttk.Frame(f, padding=10, style="Panel.TFrame"); card.pack(fill="both", expand=True)
+        ttk.Label(card, text="Recent Results", style="H2.TLabel").pack(anchor="w")
+        cols = ("file","status","details")
+        tv = ttk.Treeview(card, columns=cols, show="headings", height=10)
+        for c, w in zip(cols, (520, 100, 360)):
+            tv.heading(c, text=c.capitalize()); tv.column(c, width=w, stretch=True)
+        tv.pack(fill="both", expand=True, pady=(6, 0))
+        self.recent_tv = tv
 
-    def remove_monitor_path(self):
-        selection_indices = self.paths_listbox.curselection()
-        if selection_indices:
-            index = selection_indices[0]
-            path_to_remove = config.monitor_paths.pop(index)
-            config.save_config()
-            self.update_paths_listbox()
-            self.logger.log(f"Removed monitoring path: {path_to_remove}", "INFO")
+    def _tab_scan(self, nb):
+        f = ttk.Frame(nb); nb.add(f, text="Scan"); self._scan_tab = f
 
-            if config.realtime_enabled:
-                messagebox.showinfo("Real-Time Protection", "Restarting real-time protection to apply changes.")
-                self.scanner.start_realtime_protection()
-                self.update_realtime_status_display()
-        else:
-            messagebox.showwarning("Warning", "Please select a path to remove.")
-            
-    def _notify_threat_from_realtime(self, result: Dict) -> None:
-        """GUI-side notifier for real-time infections: prompt user and act."""
-        # This may be called from a watchdog thread; hop to Tk thread.
-        def _show():
-            file_path = Path(str(result["file"]))
-            is_archive = file_path.suffix.lower() in config.archive_types
+        top = ttk.Frame(f, padding=10, style="Panel.TFrame"); top.pack(fill="x")
+        ttk.Button(top, text="Quick Scan (Downloads)", style="Primary.TButton",
+                   command=lambda: self._start_scan("quick")).pack(side="left", padx=4)
+        ttk.Button(top, text="Full System Scan",
+                   command=lambda: self._start_scan("full")).pack(side="left", padx=4)
+        ttk.Button(top, text="Custom Scan…",
+                   command=self._choose_custom_scan).pack(side="left", padx=4)
+        ttk.Button(top, text="Stop", style="Warn.TButton",
+                   command=self._stop_scan).pack(side="left", padx=8)
 
-            # Build details text consistent with batch prompt
-            details_lines = []
-            if is_archive:
-                details_lines.append(f"Threats found in archive: {file_path.name}")
-                for t in result.get("threats", []):
-                    ht = t.get("hash_types") or [t.get("hash_type", "N/A")]
-                    if not isinstance(ht, list): ht = [ht]
-                    details_lines.append(f"  - {t.get('file')}  |  Type(s): {', '.join(ht)}")
-            else:
-                t = (result.get("threats") or [{}])[0]
-                ht = t.get("hash_types") or [t.get("hash_type", "N/A")]
-                if not isinstance(ht, list): ht = [ht]
-                details_lines.append(f"Threat: {file_path.name}  |  Type(s): {', '.join(ht)}")
+        ttk.Label(top, text="Auto action:", style="Dim.TLabel").pack(side="left", padx=(16, 4))
+        self.var_auto_action = tk.StringVar(value="")
+        cb = ttk.Combobox(top, width=14, state="readonly", textvariable=self.var_auto_action,
+                          values=["", "quarantine", "delete"])
+        cb.pack(side="left")
 
-            details_text = "\n".join(details_lines)
-            action = self._modal_action_prompt(file_path, details_text)
-            if action == "quarantine":
-                ok, msg = self.scanner.quarantine_path(file_path)
-                if ok:
-                    self.logger.log(f"User quarantined (real-time): {file_path}", "WARNING")
-                else:
-                    self.logger.log(f"Quarantine failed (real-time): {file_path} ({msg})", "ERROR")
-            elif action == "delete":
-                ok, msg = self.scanner.delete_path(file_path)
-                if ok:
-                    self.logger.log(f"User deleted (real-time): {file_path}", "WARNING")
-                else:
-                    self.logger.log(f"Delete failed (real-time): {file_path} ({msg})", "ERROR")
-            else:
-                self.logger.log(f"User ignored (real-time): {file_path}", "INFO")
+        prog = ttk.Frame(f, padding=10, style="Panel.TFrame"); prog.pack(fill="x", pady=(10, 10))
+        self.var_scan_status = tk.StringVar(value="Ready")
+        ttk.Label(prog, textvariable=self.var_scan_status).pack(anchor="w")
+        self.pb = ttk.Progressbar(prog, mode="determinate", maximum=100); self.pb.pack(fill="x", pady=(6, 0))
+        self.var_scan_current = tk.StringVar(value="—")
+        ttk.Label(prog, textvariable=self.var_scan_current, style="Dim.TLabel").pack(anchor="w", pady=(6, 0))
 
-            # Keep Quarantine tab in sync
-            self.refresh_quarantine_list()
+        card = ttk.Frame(f, padding=10, style="Panel.TFrame"); card.pack(fill="both", expand=True)
+        ttk.Label(card, text="Results", style="H2.TLabel").pack(anchor="w")
+        cols = ("file","status","details","action")
+        tv = ttk.Treeview(card, columns=cols, show="headings")
+        for c, w in zip(cols, (520, 120, 360, 100)):
+            tv.heading(c, text=c.capitalize()); tv.column(c, width=w, stretch=True)
+        tv.pack(fill="both", expand=True, pady=(6, 0))
+        self.scan_tv = tv
 
-        if hasattr(self.root, "after_idle"):
-            self.root.after_idle(_show)
-        else:
-            _show()
+    def _tab_realtime(self, nb):
+        f = ttk.Frame(nb); nb.add(f, text="Real-Time"); self._rt_tab = f
 
-    def _notify_behavior_incident_gui(self, incident: Dict[str, Any]) -> None:
-        def _show():
-            proc = incident.get("process", {})
-            exe = proc.get("exe") or "Unknown"
-            pid = incident.get("pid")
-            score = incident.get("score", 0)
-            reasons = "\n".join([f"- {rh['rule_id']}  (weight={rh['weight']})" for rh in incident.get("rule_hits", [])])
+        card = ttk.Frame(f, padding=10, style="Panel.TFrame"); card.pack(fill="x")
+        ttk.Label(card, text="Status & Controls", style="H2.TLabel").pack(anchor="w")
+        row = ttk.Frame(card); row.pack(fill="x", pady=(6, 0))
+        self.var_rt_state = tk.StringVar(value="Enabled" if self._rt_enabled else "Disabled")
+        ttk.Label(row, textvariable=self.var_rt_state).pack(side="left", padx=(0, 10))
+        ttk.Button(row, text="Enable", style="Primary.TButton",
+                   command=self._enable_rt).pack(side="left", padx=4)
+        ttk.Button(row, text="Disable",
+                   command=self._disable_rt).pack(side="left", padx=4)
+        ttk.Button(row, text="Simulate",
+                   style="Warn.TButton", command=self._simulate_rt).pack(side="right", padx=4)
 
-            details = f"PID: {pid}\nEXE: {exe}\nScore: {score}\n\nRules:\n{reasons}"
-            # Reuse existing modal choice UX
-            action = self._modal_action_prompt(Path(exe), details)  # returns "quarantine"|"ignore"|"delete"
-            try:
-                import psutil
-                if action == "delete":
-                    # Kill process then rollback
-                    psutil.Process(int(pid)).kill()
-                    cnt = self.scanner.behavior.rollback.rollback() if self.scanner.behavior else 0
-                    self.logger.log(f"[BEHAVIOR] Deleted (killed) PID {pid}; rollback handled {cnt} files.", "WARNING")
-                elif action == "quarantine":
-                    # Suspend already done. Kill gently and rollback to quarantine
-                    try:
-                        psutil.Process(int(pid)).terminate()
-                    except Exception:
-                        pass
-                    cnt = self.scanner.behavior.rollback.rollback() if self.scanner.behavior else 0
-                    self.logger.log(f"[BEHAVIOR] Quarantined/removed {cnt} recent files for PID {pid}.", "WARNING")
-                else:
-                    # Resume if user ignores
-                    try:
-                        psutil.Process(int(pid)).resume()
-                        self.logger.log(f"[BEHAVIOR] Resumed PID {pid} after user ignore.", "INFO")
-                    except Exception:
-                        pass
-            except Exception as e:
-                self.logger.log(f"[BEHAVIOR] GUI action error: {e}", "ERROR")
+        card2 = ttk.Frame(f, padding=10, style="Panel.TFrame"); card2.pack(fill="both", expand=True, pady=(10, 0))
+        ttk.Label(card2, text="Monitored Paths", style="H2.TLabel").pack(anchor="w")
+        prow = ttk.Frame(card2); prow.pack(fill="x", pady=(6, 0))
+        self.var_rt_path = tk.StringVar()
+        ttk.Entry(prow, textvariable=self.var_rt_path).pack(side="left", fill="x", expand=True)
+        ttk.Button(prow, text="Add", command=self._add_rt_path).pack(side="left", padx=6)
+        ttk.Button(prow, text="Remove Selected", command=self._remove_rt_path).pack(side="left", padx=6)
 
-        if hasattr(self.root, "after_idle"):
-            self.root.after_idle(_show)
-        else:
-            _show()
+        tv = ttk.Treeview(card2, columns=("path",), show="headings", height=8)
+        tv.heading("path", text="Path"); tv.column("path", width=820, stretch=True)
+        tv.pack(fill="both", expand=True, pady=(6, 0))
+        self.rt_tv = tv
+        self._refresh_rt_paths()
 
-    def update_paths_listbox(self):
-        self.paths_listbox.delete(0, tk.END)
-        for path_item in config.monitor_paths:
-            self.paths_listbox.insert(tk.END, path_item)
+    def _tab_quarantine(self, nb):
+        f = ttk.Frame(nb); nb.add(f, text="Quarantine")
 
-    # ---------- Quarantine ----------
-    def refresh_quarantine_list(self):
-        self.quarantine_tree.delete(*self.quarantine_tree.get_children())
+        top = ttk.Frame(f, padding=10, style="Panel.TFrame"); top.pack(fill="x")
+        ttk.Label(top, text="Items", style="H2.TLabel").pack(side="left")
+        ttk.Button(top, text="Refresh", command=self._q_refresh).pack(side="right", padx=4)
+        ttk.Button(top, text="Delete Selected", style="Danger.TButton",
+                   command=self._q_delete_selected).pack(side="right", padx=4)
+        ttk.Button(top, text="Restore Selected…",
+                   command=self._q_restore_selected).pack(side="right", padx=4)
 
-        if config.quarantine_dir.exists():
-            for file_path in config.quarantine_dir.iterdir():
-                if file_path.is_file() and file_path.name.endswith(".quarantined"):
-                    try:
-                        stat = file_path.stat()
-                        date_str = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-                        size_mb = stat.st_size / (1024 * 1024)
-                        size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{stat.st_size / 1024:.1f} KB"
-                        parts = file_path.name.split('.')
-                        original_name_hint = ".".join(parts[:-2]) if len(parts) > 2 else parts[0]
+        card = ttk.Frame(f, padding=10, style="Panel.TFrame")
+        card.pack(fill="both", expand=True, pady=(10, 0))
+        cols = ("file","path","date","size")
+        tv = ttk.Treeview(card, columns=cols, show="headings", selectmode="extended")
+        for c, w in zip(cols, (360, 420, 160, 120)):
+            tv.heading(c, text=c.capitalize()); tv.column(c, width=w, stretch=True)
+        tv.pack(fill="both", expand=True)
+        self.q_tv = tv
 
-                        self.quarantine_tree.insert("", tk.END, values=(
-                            file_path.name,
-                            original_name_hint,
-                            date_str,
-                            size_str
-                        ), iid=str(file_path))
-                    except Exception as e:
-                        self.logger.log(f"Error reading quarantine file info {file_path}: {e}", "ERROR")
+        # start watcher
+        self._start_quarantine_watcher()
+        self._q_refresh()
 
-    def restore_from_quarantine(self):
-        selected_items = self.quarantine_tree.selection()
-        if not selected_items:
-            messagebox.showwarning("Warning", "Please select a file from the quarantine list to restore.")
-            return
+    def _tab_signatures(self, nb):
+        f = ttk.Frame(nb); nb.add(f, text="Signatures")
 
-        selected_item_id = selected_items[0]
-        quarantined_file_path = Path(selected_item_id)
+        form = ttk.Frame(f, padding=10, style="Panel.TFrame"); form.pack(fill="x")
+        ttk.Label(form, text="Add Signature", style="H2.TLabel").pack(anchor="w")
+        row = ttk.Frame(form); row.pack(fill="x", pady=(6, 0))
+        ttk.Label(row, text="Hash:").pack(side="left")
+        self.var_sig_hash = tk.StringVar()
+        ttk.Entry(row, textvariable=self.var_sig_hash, width=60).pack(side="left", padx=6)
+        ttk.Label(row, text="Type:").pack(side="left", padx=(12, 4))
+        self.var_sig_type = tk.StringVar(value="sha256")
+        ttk.Combobox(row, textvariable=self.var_sig_type, state="readonly",
+                     values=["sha256","md5"], width=10).pack(side="left")
+        ttk.Button(row, text="Add", style="Primary.TButton",
+                   command=self._sig_add).pack(side="left", padx=8)
 
-        if quarantined_file_path.exists():
-            parts = quarantined_file_path.name.split('.')
-            suggested_original_name = ".".join(parts[:-2]) if len(parts) > 2 else parts[0]
+        row2 = ttk.Frame(form); row2.pack(fill="x", pady=(6, 0))
+        ttk.Button(row2, text="Export JSON",
+                   command=self._sig_export).pack(side="left", padx=4)
+        ttk.Button(row2, text="Import JSON…",
+                   command=self._sig_import).pack(side="left", padx=4)
 
-            restore_path_str = filedialog.asksaveasfilename(
-                title="Select Restore Location and Filename",
-                initialfile=suggested_original_name,
-                defaultextension=".*",
-                initialdir=str(Path.home() / "Downloads")
-            )
+        card = ttk.Frame(f, padding=10, style="Panel.TFrame"); card.pack(fill="both", expand=True, pady=(10, 0))
+        ttk.Label(card, text="Signature Store", style="H2.TLabel").pack(anchor="w")
+        tv = ttk.Treeview(card, columns=("type","hash"), show="headings", selectmode="extended")
+        tv.heading("type", text="Type"); tv.column("type", width=100)
+        tv.heading("hash", text="Hash"); tv.column("hash", width=820, stretch=True)
+        tv.pack(fill="both", expand=True, pady=(6, 0))
+        self.sig_tv = tv
+        self._sig_refresh()
 
-            if restore_path_str:
-                restore_path = Path(restore_path_str)
-                try:
-                    shutil.move(str(quarantined_file_path), str(restore_path))
-                    self.logger.log(f"File restored: {quarantined_file_path} -> {restore_path}", "INFO")
-                    messagebox.showinfo("Success", f"File '{quarantined_file_path.name}' restored to '{restore_path}'.")
-                    self.refresh_quarantine_list()
-                except Exception as e:
-                    self.logger.log(f"Failed to restore file {quarantined_file_path}: {e}", "ERROR")
-                    messagebox.showerror("Error", f"Failed to restore file: {e}")
-        else:
-            messagebox.showerror("Error", "Selected quarantined file no longer exists.")
-            self.refresh_quarantine_list()
+    def _tab_logs(self, nb):
+        f = ttk.Frame(nb); nb.add(f, text="Logs")
+        top = ttk.Frame(f, padding=10, style="Panel.TFrame"); top.pack(fill="x")
+        ttk.Label(top, text="Logs", style="H2.TLabel").pack(side="left")
+        ttk.Button(top, text="Copy", command=self._log_copy).pack(side="right", padx=4)
+        ttk.Button(top, text="Open Log File", command=self._open_log_file).pack(side="right", padx=4)
 
-    def delete_from_quarantine(self):
-        selected_items = self.quarantine_tree.selection()
-        if not selected_items:
-            messagebox.showwarning("Warning", "Please select a file from the quarantine list to delete.")
-            return
+        body = ttk.Frame(f, padding=10, style="Panel.TFrame"); body.pack(fill="both", expand=True, pady=(10, 0))
+        self.txt_log = tk.Text(body, wrap="word", bg=UITheme.BG1, fg=UITheme.TEXT,
+                               insertbackground=UITheme.TEXT, relief="flat")
+        self.txt_log.pack(fill="both", expand=True)
 
-        selected_item_id = selected_items[0]
-        quarantined_file_path = Path(selected_item_id)
-
-        if messagebox.askyesno("Confirm Deletion",
-                               f"Are you sure you want to permanently delete '{quarantined_file_path.name}'?\nThis action cannot be undone."):
-            if quarantined_file_path.exists():
-                try:
-                    quarantined_file_path.unlink()
-                    self.logger.log(f"File permanently deleted from quarantine: {quarantined_file_path}", "INFO")
-                    messagebox.showinfo("Success", f"File '{quarantined_file_path.name}' permanently deleted.")
-                    self.refresh_quarantine_list()
-                except Exception as e:
-                    self.logger.log(f"Failed to delete quarantined file {quarantined_file_path}: {e}", "ERROR")
-                    messagebox.showerror("Error", f"Failed to delete file: {e}")
-            else:
-                messagebox.showerror("Error", "Selected quarantined file no longer exists.")
-                self.refresh_quarantine_list()
-
-    # ---------- Signatures ----------
-    def add_signature_gui(self):
-        signature = self.sig_entry.get().strip().lower()
-        hash_type = self.hash_type_var.get().lower()
-
-        if not signature:
-            messagebox.showwarning("Input Error", "Signature field cannot be empty.")
-            return
-
-        if hash_type == "md5" and len(signature) != 32:
-            messagebox.showerror("Input Error", "Invalid MD5 hash format. Must be 32 hexadecimal characters.")
-            return
-        if hash_type == "sha256" and len(signature) != 64:
-            messagebox.showerror("Input Error", "Invalid SHA256 hash format. Must be 64 hexadecimal characters.")
-            return
-        if not all(c in "0123456789abcdef" for c in signature):
-            messagebox.showerror("Input Error", "Invalid hash characters. Must be hexadecimal.")
-            return
-
+    # --------------- UI pump ---------------
+    def _pump_ui(self):
         try:
-            if signature in self.scanner.sig_db.signatures[hash_type]:
-                messagebox.showinfo("Info", f"{hash_type.upper()} signature already exists in the database.")
+            for _ in range(100):
+                cb = self._uiq.get_nowait()
+                cb()
+        except queue.Empty:
+            pass
+        self.root.after(50, self._pump_ui)
+
+    # --------------- Scanning ---------------
+    def _choose_custom_scan(self):
+        sel = filedialog.askdirectory(title="Choose folder to scan")
+        if not sel: return
+        self._start_scan("custom", [Path(sel)])
+
+    def _start_scan(self, mode: str, paths: Optional[List[Path]] = None):
+        if self._scan_thread and self._scan_thread.is_alive():
+            messagebox.showwarning("Scan", "A scan is already running.")
+            return
+
+        if mode == "quick":
+            paths = [Path(p) for p in (config.monitor_paths or [])] or [Path.home() / "Downloads"]
+        elif mode == "full":
+            paths = [Path("/") if os.name != "nt" else Path(os.environ.get("SystemDrive", "C:") + "\\")]
+        else:
+            paths = paths or []
+            if not paths:
+                messagebox.showwarning("Scan", "No paths selected for custom scan.")
                 return
 
-            self.scanner.sig_db.add_signature(signature, hash_type)
-            self.logger.log(f"User added {hash_type.UPPER()} signature: {signature}", "INFO")
-            messagebox.showinfo("Success", f"{hash_type.upper()} signature added to the database.")
-            self.sig_entry.delete(0, tk.END)
+        task = ScanTask(mode=mode, paths=paths, auto_action=self.var_auto_action.get() or "")
+        self.scan_tv.delete(*self.scan_tv.get_children())
+        self.var_scan_status.set("Starting…"); self.var_scan_current.set("—"); self.pb["value"] = 0
+        self._scan_stop.clear()
+        self._scan_thread = threading.Thread(target=self._scan_worker, args=(task,), daemon=True)
+        self._scan_thread.start()
+        self.logger.log(f"Starting {mode} scan on {len(paths)} path(s)")
+
+    def _iter_files(self, roots: Iterable[Path]) -> Iterable[Path]:
+        for rp in roots:
+            try:
+                if rp.is_file():
+                    yield rp
+                elif rp.is_dir():
+                    for root, _, files in os.walk(rp):
+                        for name in files:
+                            yield Path(root) / name
+            except Exception as e:
+                self.logger.log(f"Enumerate error for {rp}: {e}", "WARNING")
+
+    def _scan_worker(self, task: ScanTask):
+        files = list(self._iter_files(task.paths))
+        total = max(1, len(files))
+        processed = 0
+
+        def cb_progress(pct: float, current: str):
+            self._uiq.put(lambda: self._scan_progress(pct, current))
+
+        for fp in files:
+            if self._scan_stop.is_set():
+                break
+
+            auto = task.auto_action if task.auto_action in {"quarantine","delete"} else None
+            res = self.scanner.scan_file(fp, auto_action=auto)
+            processed += 1
+            pct = int(processed * 100 / total)
+            cb_progress(pct, str(fp))
+
+            if res.get("status") == "infected" and not auto:
+                details = self._format_threats(res.get("threats") or [])
+                choice = prompt_threat(self.root, res.get("file",""), details)
+                if choice in {"quarantine","delete"}:
+                    # apply action directly
+                    if choice == "quarantine":
+                        ok, msg = self.scanner.quarantine_path(Path(res["file"]))
+                        res["action"] = "quarantine"; res["action_ok"] = ok
+                        if not ok: res["action_error"] = msg
+                    else:
+                        ok, msg = self.scanner.delete_path(Path(res["file"]))
+                        res["action"] = "delete"; res["action_ok"] = ok
+                        if not ok: res["action_error"] = msg
+                else:
+                    res["action"] = "ignore"
+
+            self._uiq.put(lambda r=res: self._scan_row(r))
+
+        self._uiq.put(self._scan_done)
+
+    def _stop_scan(self):
+        self._scan_stop.set()
+        self.logger.log("Stopping scan…", "INFO")
+
+    def _scan_progress(self, pct: float, current: str):
+        self.var_scan_status.set(f"Scanning… {int(pct)}%")
+        self.var_scan_current.set(f"Current: {current}")
+        self.pb["value"] = pct
+
+    def _scan_row(self, res: Dict[str, Any]):
+        det = self._format_threats(res.get("threats") or [])
+        action = res.get("action", res.get("action_taken", "—"))
+        vals = (res.get("file",""), res.get("status",""), det, action)
+        self.scan_tv.insert("", "end", values=vals)
+        # dashboard recent
+        self.recent_tv.insert("", 0, values=(vals[0], vals[1], vals[2]))
+        if len(self.recent_tv.get_children()) > 8:
+            for iid in self.recent_tv.get_children()[8:]:
+                self.recent_tv.delete(iid)
+
+    def _scan_done(self):
+        self.var_scan_status.set("Completed")
+        self.var_scan_current.set("Done")
+        self.pb["value"] = 100
+        self.logger.log("Scan completed.", "INFO")
+
+    @staticmethod
+    def _format_threats(threats: List[Dict[str, Any]]) -> str:
+        out = []
+        for t in threats:
+            # MalwareScanner can produce: hash_types (list), yara_rule, etc.
+            htypes = t.get("hash_types")
+            if not htypes:
+                ht = t.get("hash_type")
+                htypes = [ht] if ht else []
+            if isinstance(htypes, str):
+                htypes = [htypes]
+            tag = ", ".join(str(x) for x in htypes) if htypes else "Indicators"
+            name = t.get("yara_rule") or t.get("name") or "Detection"
+            out.append(f"{name} — {tag}")
+        return "; ".join(out)
+
+    # --------------- Real-Time ---------------
+    def _enable_rt(self, startup: bool = False):
+        try:
+            config.monitor_paths = self._rt_paths[:]
+            self.scanner.start_realtime_protection()
+            self._rt_enabled = True
+            self.var_rt_state.set("Enabled"); self.var_rt_chip.set("Real-Time: On")
+            if not startup:
+                self.logger.log("Real-time protection enabled.", "INFO")
         except Exception as e:
-            self.logger.log(f"Failed to add signature via GUI: {e}", "ERROR")
-            messagebox.showerror("Error", f"Failed to add signature: {e}")
+            messagebox.showerror("Real-Time", f"Failed to enable: {e}")
+            self.logger.log(f"Real-time enable failed: {e}", "ERROR")
+
+    def _disable_rt(self):
+        try:
+            self.scanner.stop_realtime_protection()
+        except Exception:
+            pass
+        self._rt_enabled = False
+        self.var_rt_state.set("Disabled"); self.var_rt_chip.set("Real-Time: Off")
+        self.logger.log("Real-time protection disabled.", "INFO")
+
+    def _add_rt_path(self):
+        p = self.var_rt_path.get().strip()
+        if not p: return
+        if p not in self._rt_paths:
+            self._rt_paths.append(p)
+            config.monitor_paths = self._rt_paths[:]
+            config.save_config()
+            self._refresh_rt_paths()
+            self.logger.log(f"Added real-time path: {p}", "INFO")
+
+    def _remove_rt_path(self):
+        sel = self.rt_tv.selection()
+        removed = 0
+        for iid in sel:
+            val = self.rt_tv.item(iid, "values")[0]
+            if val in self._rt_paths:
+                self._rt_paths.remove(val)
+                removed += 1
+        if removed:
+            config.monitor_paths = self._rt_paths[:]
+            config.save_config()
+            self._refresh_rt_paths()
+            self.logger.log(f"Removed {removed} path(s) from real-time monitor.", "INFO")
+
+    def _refresh_rt_paths(self):
+        self.rt_tv.delete(*self.rt_tv.get_children())
+        for p in self._rt_paths:
+            self.rt_tv.insert("", "end", values=(p,))
+
+    def _simulate_rt(self):
+        # optional helper for quick test
+        fake = str(Path.home() / "Downloads" / "suspicious.exe")
+        self._notify_threat_gui({"file": fake, "status": "infected", "threats": [{"name":"Simulated","hash_types":["TEST"]}]})
+
+    def _notify_threat_gui(self, result: Dict[str, Any]) -> None:
+        """
+        Callback set on MalwareScanner to handle real-time detections.
+        Presents modal and applies quarantine/delete through scanner helpers.
+        """
+        try:
+            file_path = Path(str(result.get("file","")))
+            details = self._format_threats(result.get("threats") or [])
+            self.logger.log(f"[REAL-TIME] Threat detected: {file_path}", "WARNING")
+            choice = prompt_threat(self.root, str(file_path), details)
+
+            if choice == "quarantine":
+                ok, msg = self.scanner.quarantine_path(file_path)
+                self.logger.log(f"[REAL-TIME] {'Quarantined' if ok else 'Failed to quarantine'}: {file_path}", "WARNING" if ok else "ERROR")
+            elif choice == "delete":
+                ok, msg = self.scanner.delete_path(file_path)
+                self.logger.log(f"[REAL-TIME] {'Deleted' if ok else 'Failed to delete'}: {file_path}", "WARNING" if ok else "ERROR")
+            else:
+                self.logger.log(f"[REAL-TIME] Ignored by user: {file_path}", "INFO")
+
+            # reflect in tables
+            self.scan_tv.insert("", 0, values=(str(file_path), result.get("status","infected"), details, choice or "—"))
+            self.recent_tv.insert("", 0, values=(str(file_path), result.get("status","infected"), details))
+        except Exception as e:
+            self.logger.log(f"Real-time UI handling error: {e}", "ERROR")
+
+    # --------------- Quarantine ---------------
+    def _q_snapshot(self) -> Dict[str, float]:
+        snap: Dict[str, float] = {}
+        qd = Path(config.quarantine_dir)
+        if not qd.exists(): return snap
+        for p in qd.rglob("*"):
+            if p.is_file():
+                try:
+                    snap[str(p)] = p.stat().st_mtime
+                except Exception:
+                    pass
+        return snap
+
+    def _start_quarantine_watcher(self):
+        def loop():
+            self._q_last_snapshot = self._q_snapshot()
+            while not self._q_stop.wait(2.0):
+                cur = self._q_snapshot()
+                if cur != self._q_last_snapshot:
+                    self._q_last_snapshot = cur
+                    self._uiq.put(self._q_refresh)
+        self._q_thread = threading.Thread(target=loop, name="quarantine-watch", daemon=True)
+        self._q_thread.start()
+
+    def _q_refresh(self):
+        self.q_tv.delete(*self.q_tv.get_children())
+        qdir = Path(config.quarantine_dir)
+        if not qdir.exists(): return
+        for p in sorted(qdir.rglob("*")):
+            if not p.is_file(): continue
+            try:
+                st = p.stat()
+                self.q_tv.insert(
+                    "", "end", iid=str(p),
+                    values=(p.name, str(p), datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"), _human_size(st.st_size))
+                )
+            except Exception:
+                pass
+
+    def _q_selected_paths(self) -> List[Path]:
+        return [Path(iid) for iid in self.q_tv.selection()]
+
+    def _q_restore_selected(self):
+        paths = self._q_selected_paths()
+        if not paths: return
+        dest_dir = filedialog.askdirectory(title="Restore to folder")
+        if not dest_dir: return
+        restored = 0
+        for p in paths:
+            try:
+                target = Path(dest_dir) / p.name
+                # ensure unique
+                i = 1
+                while target.exists():
+                    target = Path(dest_dir) / f"{p.stem}.{i}{p.suffix}"
+                    i += 1
+                os.makedirs(target.parent, exist_ok=True)
+                os.replace(p, target)
+                restored += 1
+            except Exception as e:
+                self.logger.log(f"Restore failed for {p}: {e}", "ERROR")
+        self.logger.log(f"Restored {restored} item(s).", "INFO")
+        self._q_refresh()
+
+    def _q_delete_selected(self):
+        paths = self._q_selected_paths()
+        if not paths: return
+        if not messagebox.askyesno("Quarantine", f"Delete {len(paths)} selected item(s)?"):
+            return
+        cnt = 0
+        for p in paths:
+            try:
+                p.unlink(missing_ok=True)
+                cnt += 1
+            except Exception as e:
+                self.logger.log(f"Delete failed for {p}: {e}", "ERROR")
+        self.logger.log(f"Deleted {cnt} quarantined item(s).", "INFO")
+        self._q_refresh()
+
+    # --------------- Signatures ---------------
+    def _sig_add(self):
+        h = self.var_sig_hash.get().strip().lower()
+        t = self.var_sig_type.get().lower()
+        if not h or not all(c in "0123456789abcdef" for c in h):
+            messagebox.showwarning("Signatures", "Hash must be hexadecimal.")
+            return
+        if t == "md5" and len(h) != 32:
+            messagebox.showwarning("Signatures", "MD5 must be 32 hex chars.")
+            return
+        if t == "sha256" and len(h) != 64:
+            messagebox.showwarning("Signatures", "SHA256 must be 64 hex chars.")
+            return
+        try:
+            if h in self.sigdb.signatures[t]:
+                messagebox.showinfo("Signatures", "Already exists.")
+                return
+            self.sigdb.add_signature(h, t)
+            self._sig_refresh()
+            self.logger.log(f"Added {t.upper()} signature: {h}", "INFO")
+            self.var_sig_hash.set("")
+        except Exception as e:
+            messagebox.showerror("Signatures", f"Failed: {e}")
+
+    def _sig_export(self):
+        try:
+            data = {
+                "md5": sorted(self.sigdb.signatures["md5"]),
+                "sha256": sorted(self.sigdb.signatures["sha256"]),
+            }
+        except Exception:
+            data = {"md5": [], "sha256": []}
+        out = filedialog.asksaveasfilename(defaultextension=".json",
+                                           filetypes=[("JSON","*.json")],
+                                           title="Export Signatures")
+        if not out: return
+        Path(out).write_text(json.dumps(data, indent=2), encoding="utf-8")
+        self.logger.log(f"Exported signatures to {out}", "INFO")
+
+    def _sig_import(self):
+        fn = filedialog.askopenfilename(filetypes=[("JSON","*.json")], title="Import Signatures")
+        if not fn: return
+        try:
+            data = json.loads(Path(fn).read_text(encoding="utf-8"))
+            md5s = [str(x).lower() for x in data.get("md5", [])]
+            sha256s = [str(x).lower() for x in data.get("sha256", [])]
+            for h in md5s: self.sigdb.add_signature(h, "md5")
+            for h in sha256s: self.sigdb.add_signature(h, "sha256")
+            self._sig_refresh()
+            self.logger.log(f"Imported signatures: MD5={len(md5s)} SHA256={len(sha256s)}", "INFO")
+        except Exception as e:
+            messagebox.showerror("Import", f"Failed: {e}")
+
+    def _sig_refresh(self):
+        self.sig_tv.delete(*self.sig_tv.get_children())
+        try:
+            rows = [("MD5", h) for h in sorted(self.sigdb.signatures["md5"])]
+            rows += [("SHA256", h) for h in sorted(self.sigdb.signatures["sha256"])]
+        except Exception:
+            rows = []
+        for typ, h in rows:
+            self.sig_tv.insert("", "end", values=(typ, h))
+
+    # --------------- Logs ---------------
+    def _log_copy(self):
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append("\n".join(self._log_lines))
+            messagebox.showinfo("Logs", "Logs copied to clipboard.")
+        except Exception as e:
+            messagebox.showerror("Logs", str(e))
+
+    def _open_log_file(self):
+        try:
+            log_path = Path(config.log_file)
+            messagebox.showinfo("Logs", f"Log file: {log_path}")
+        except Exception as e:
+            messagebox.showerror("Logs", str(e))
+
+
+# For manual execution
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = AntivirusGUI(root)
+    def _on_close():
+        try:
+            app.destroy()
+        except Exception:
+            pass
+        root.destroy()
+    root.protocol("WM_DELETE_WINDOW", _on_close)
+    root.mainloop()
