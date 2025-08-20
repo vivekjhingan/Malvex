@@ -1,4 +1,4 @@
-# maldefender/behavior_engine.py
+# malvex/behavior_engine.py
 """
 Behavioral Analysis Engine (portable baseline + optional Windows enhancements)
 

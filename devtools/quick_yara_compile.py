@@ -1,7 +1,7 @@
 # devtools/quick_yara_compile.py  (optional helper)
 from pathlib import Path
-from maldefender.app_logger import Logger
-from maldefender.yara_scanner import YaraScanner
+from malvex.app_logger import Logger
+from malvex.yara_scanner import YaraScanner
 
 if __name__ == "__main__":
     log = Logger()

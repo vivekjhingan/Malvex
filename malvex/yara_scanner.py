@@ -1,6 +1,6 @@
-# maldefender/yara_scanner.py
+# malvex/yara_scanner.py
 """
-YARA-based static analysis for MalDefender.
+YARA-based static analysis for Malvex.
 
 Design goals:
 - Compile-once (cached) ruleset with thread-safe reuse.
@@ -225,7 +225,7 @@ class YaraScanner:
         """
         Resolve a rules path in this priority:
           1) Explicit path from config.yara_rules_file if it exists.
-          2) Project-relative fallback maldefender/yara_rules/maldefender_rules.yar
+          2) Project-relative fallback malvex/yara_rules/malvex_rules.yar
         """
         try:
             # 1) Configured
@@ -233,7 +233,7 @@ class YaraScanner:
                 return Path(self.rules_path)
 
             # 2) Project default
-            project_default = Path(__file__).resolve().parent / "yara_rules" / "maldefender_rules.yar"
+            project_default = Path(__file__).resolve().parent / "yara_rules" / "malvex_rules.yar"
             if project_default.exists():
                 return project_default
         except Exception:

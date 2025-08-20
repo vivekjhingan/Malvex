@@ -1,5 +1,5 @@
 """
-MalDefender — Tk GUI (production)
+Malvex — Tk GUI (production)
 Integrates with MalwareScanner, Real-Time monitor, Signature DB, and Quarantine.
 
 Key improvements vs previous GUI:

@@ -1,4 +1,4 @@
-# maldefender/realtime_monitor.py
+# malvex/realtime_monitor.py
 import time
 import threading
 from pathlib import Path

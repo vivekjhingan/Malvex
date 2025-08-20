@@ -1,4 +1,4 @@
-# maldefender/file_utils.py
+# malvex/file_utils.py
 import hashlib
 from pathlib import Path
 from typing import Tuple, Optional

@@ -1,6 +1,6 @@
-/* maldefender/yara_rules/maldefender_rules.yar
+/* malvex/yara_rules/malvex_rules.yar
 
-  MalDefender consolidated YARA ruleset
+  Malvex consolidated YARA ruleset
   - Keep all rules in this single file for simplicity and performance.
   - Each rule uses conservative conditions and a filesize guard.
   - meta.score gives a suggested severity for UI ranking (0–100).
@@ -15,7 +15,7 @@ import "pe"
 rule PS_EncodedCommand_Generic
 {
     meta:
-        author = "MalDefender"
+        author = "Malvex"
         description = "PowerShell encoded command usage (generic)"
         score = 65
         reference = "Heuristic"
@@ -30,7 +30,7 @@ rule PS_EncodedCommand_Generic
 rule Script_Obfuscation_Base64_Long
 {
     meta:
-        author = "MalDefender"
+        author = "Malvex"
         description = "Long base64-like constant strings (possible obfuscation)"
         score = 45
         reference = "Heuristic"
@@ -43,7 +43,7 @@ rule Script_Obfuscation_Base64_Long
 rule UPX_Packed_PE
 {
     meta:
-        author = "MalDefender"
+        author = "Malvex"
         description = "UPX-packed PE (benign or malicious; higher scrutiny)"
         score = 40
         reference = "UPX heuristic"
@@ -56,7 +56,7 @@ rule UPX_Packed_PE
 rule Office_Macro_Keywords
 {
     meta:
-        author = "MalDefender"
+        author = "Malvex"
         description = "Office macro auto-run keywords"
         score = 55
         reference = "Heuristic"
@@ -74,7 +74,7 @@ rule Office_Macro_Keywords
 rule Generic_Cred_Dumper_Markers
 {
     meta:
-        author = "MalDefender"
+        author = "Malvex"
         description = "Generic cred-dumping markers (very conservative)"
         score = 70
         reference = "Heuristic"
@@ -89,7 +89,7 @@ rule Generic_Cred_Dumper_Markers
 rule Suspicious_DLL_Load_Export
 {
     meta:
-        author = "MalDefender"
+        author = "Malvex"
         description = "Suspicious export names often used by loaders"
         score = 50
         reference = "Heuristic"
@@ -101,13 +101,13 @@ rule Suspicious_DLL_Load_Export
         filesize < 50MB and pe.is_pe and 1 of them
 }
 
-rule MALDEFENDER_TestMarker
+rule MALVEX_TestMarker
 {
     meta:
-        description = "Benign test marker for MalDefender"
+        description = "Benign test marker for Malvex"
         score = 100
     strings:
-        $s = "MALDEFENDER_TEST_TOKEN"
+        $s = "MALVEX_TEST_TOKEN"
     condition:
         $s
 }

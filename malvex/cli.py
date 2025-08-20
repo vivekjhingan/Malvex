@@ -1,4 +1,4 @@
-# maldefender/cli.py
+# malvex/cli.py
 import argparse
 import sys
 from pathlib import Path
@@ -54,8 +54,8 @@ class CommandLineInterface:
         parser = argparse.ArgumentParser(
             description=f"{config.app_name} v{config.version} - Command Line Interface",
             epilog="Examples:\n"
-                   "  run_maldefender.py --scan ~/Downloads\n"
-                   "  run_maldefender.py ~/Downloads --auto-action quarantine\n",
+                   "  run_malvex.py --scan ~/Downloads\n"
+                   "  run_malvex.py ~/Downloads --auto-action quarantine\n",
             formatter_class=argparse.RawTextHelpFormatter,
         )
         parser.add_argument(
@@ -95,7 +95,7 @@ class CommandLineInterface:
         if not args and not sys.stdin.isatty():
             parser.print_help()
             return
-        # Interactive + no args → show help (GUI is launched via run_maldefender.py, not here)
+        # Interactive + no args → show help (GUI is launched via run_malvex.py, not here)
         if not args and sys.stdin.isatty():
             self.logger.log("No CLI arguments provided. See options below.", "INFO")
             parser.print_help()

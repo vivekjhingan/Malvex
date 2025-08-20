@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from maldefender.app_logger import Logger
-from maldefender.behavior_engine import (
+from malvex.app_logger import Logger
+from malvex.behavior_engine import (
     BehaviorEngine,
     ProcInfo,
     FSEvent,

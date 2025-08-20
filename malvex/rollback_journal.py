@@ -1,4 +1,4 @@
-# maldefender/rollback_journal.py
+# malvex/rollback_journal.py
 """
 Rollback journal for created files.
 

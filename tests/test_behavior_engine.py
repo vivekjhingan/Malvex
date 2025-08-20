@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 # Import from your package
-from maldefender.app_logger import Logger
-from maldefender.behavior_engine import (
+from malvex.app_logger import Logger
+from malvex.behavior_engine import (
     BehaviorEngine,
     ProcInfo,
     NetEvent,
