@@ -581,6 +581,14 @@ class AntivirusGUI:
         self._rt_enabled = False
         self.var_rt_state.set("Disabled"); self.var_rt_chip.set("Real-Time: Off")
         self.logger.log("Real-time protection disabled.", "INFO")
+        
+    # gui.py — inside AntivirusGUI
+    def update_realtime_status_display(self):
+        """Sync RT status chips/labels; safe to call any time."""
+        if getattr(self, "var_rt_state", None):
+            self.var_rt_state.set("Enabled" if self._rt_enabled else "Disabled")
+        if getattr(self, "var_rt_chip", None):
+            self.var_rt_chip.set("Real-Time: On" if self._rt_enabled else "Real-Time: Off")
 
     def _add_rt_path(self):
         p = self.var_rt_path.get().strip()
