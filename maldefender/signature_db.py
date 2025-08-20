@@ -1,4 +1,4 @@
-# malvex/signature_db.py
+# maldefender/signature_db.py
 import json
 from typing import Set, Tuple, Dict
 
@@ -25,19 +25,7 @@ class SignatureDatabase:
             except Exception as e:
                 print(f"Error loading signatures: {e}") # Basic logging
         else:
-            # Initialize with default signatures
-            self.signatures = {
-                "md5": {
-                    "e10adc3949ba59abbe56e057f20f883e", # Example: '123456'
-                    "5f4dcc3b5aa765d61d8327deb882cf99", # Example: 'test'
-                    "098f6bcd4621d373cade4e832627b4f6"  # Example: 'test' (different algorithm, illustrative)
-                },
-                "sha256": {
-                    "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f", # Example: 'test'
-                    "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae", # Example: eicar.com test string
-                    "bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721"  # Example random hash
-                }
-            }
+            self.signatures = {"md5": set(), "sha256": set()}
             self.save_signatures()
     
     def save_signatures(self):
