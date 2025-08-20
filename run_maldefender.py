@@ -2,6 +2,7 @@
 import sys
 import subprocess
 import os # For checking if running in a virtual environment
+from maldefender.gui import AntivirusGUI as MalvexGUI 
 
 def running_in_virtualenv():
     """Check if running inside a virtual environment."""
@@ -10,7 +11,7 @@ def running_in_virtualenv():
 
 def ensure_packages():
     """Install required packages if not available."""
-    required_packages = ["watchdog", "rarfile"] # tkinter is usually standard
+    required_packages = ["watchdog", "rarfile", "matplotlib"] # tkinter is usually standard
     
     # Check if pip is available, especially if not in a venv, user might not want global installs
     try:
@@ -93,6 +94,11 @@ def main():
         print("This might be due to a failed package installation or an issue with the application structure.")
         sys.exit(1)
 
+    if "--visualize" in sys.argv:
+        from maldefender.visualizer import visualize_performance
+        visualize_performance()
+        sys.exit(0)
+
     # Step 4: Decide to launch CLI or GUI
     # If '--gui' is explicitly passed, or if no arguments are given and GUI is possible
     if "--gui" in sys.argv or (len(sys.argv) == 1 and gui_possible):
@@ -100,10 +106,10 @@ def main():
             try:
                 # GUI related imports should be here, after package checks.
                 import tkinter as tk # Re-import for clarity in this block
-                from maldefender.gui import AntivirusGUI
+                from maldefender.gui import AntivirusGUI as MalvexGUI
                 
                 root = tk.Tk()
-                app_gui = AntivirusGUI(root)
+                app_gui = MalvexGUI(root)
                 # Logger is initialized within AntivirusGUI
                 app_gui.logger.log(f"{config.app_name} GUI started.", "INFO")
                 if config.realtime_enabled: # Check if config has it enabled by default
