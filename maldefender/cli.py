@@ -1,101 +1,127 @@
-# maldefender/cli.py
+# malvex/cli.py
 import argparse
 import sys
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Optional, Any
 
-# Relative imports for components within the 'maldefender' package
 from .app_config import config
 from .app_logger import Logger
 from .malware_scanner import MalwareScanner
-# from .gui import AntivirusGUI # This will be imported in run_maldefender.py if GUI is chosen
+
 
 class CommandLineInterface:
-    """Command line interface for headless operation"""    
-    
     def __init__(self):
-        # CLI uses its own logger instance, not tied to GUI callback here
-        self.logger = Logger() 
+        self.logger = Logger()
         self.scanner = MalwareScanner(self.logger)
-    
-    def run(self, args: Optional[List[str]] = None): # args can be None if called directly
-        """Run CLI commands. Expects sys.argv[1:] or custom list."""
-        if args is None: # If no args are passed (e.g. direct call), use sys.argv
+        # Real-time detections should also prompt in CLI:
+        self.scanner.notify_threat = self._notify_threat_cli  # NEW
+
+    def _notify_threat_cli(self, result: Dict) -> None:
+        file_path = Path(str(result["file"]))
+        is_archive = file_path.suffix.lower() in config.archive_types
+
+        if is_archive:
+            detail = f"{file_path.name} (archive contains threat(s))"
+        else:
+            t = (result.get("threats") or [{}])[0]
+            ht = t.get("hash_types") or [t.get("hash_type", "N/A")]
+            if not isinstance(ht, list): ht = [ht]
+            detail = f"{file_path.name} | Type(s): {', '.join(ht)}"
+
+        self.logger.log(f"\n[REAL-TIME] Threat detected: {file_path}\n  {detail}", "WARNING")
+        while True:
+            choice = input("[REAL-TIME] Action? [Q]uarantine / [D]elete / [I]gnore (default=I): ").strip().lower()
+            if choice in {"q", "d", "i", ""}:
+                break
+            print("Please enter Q, D, I, or press Enter for Ignore.")
+
+        if choice in {"", "i"}:
+            self.logger.log(f"[REAL-TIME] Ignored by user: {file_path}", "INFO")
+            return
+
+        if choice == "q":
+            ok, msg = self.scanner.quarantine_path(file_path)
+            self.logger.log(f"[REAL-TIME] {'Quarantined' if ok else 'Failed to quarantine'}: {file_path}", "WARNING" if ok else "ERROR")
+        elif choice == "d":
+            ok, msg = self.scanner.delete_path(file_path)
+            self.logger.log(f"[REAL-TIME] {'Deleted' if ok else 'Failed to delete'}: {file_path}", "WARNING" if ok else "ERROR")
+
+    def run(self, args: Optional[List[str]] = None) -> None:
+        """Run CLI commands. Expects sys.argv[1:] or a custom list."""
+        if args is None:
             args = sys.argv[1:]
 
         parser = argparse.ArgumentParser(
             description=f"{config.app_name} v{config.version} - Command Line Interface",
-            epilog="If no arguments are provided, the GUI will attempt to launch (if available)."
+            epilog="Examples:\n"
+                   "  run_malvex.py --scan ~/Downloads\n"
+                   "  run_malvex.py ~/Downloads --auto-action quarantine\n",
+            formatter_class=argparse.RawTextHelpFormatter,
         )
         parser.add_argument(
-            "path_to_scan", nargs="?", # Optional positional argument
-            help="File or directory to scan. If omitted and no other action specified, GUI launches."
+            "path_to_scan", nargs="?",
+            help="File or directory to scan. If omitted and no other action is specified, help is shown."
         )
         parser.add_argument(
             "--scan", dest="scan_path_explicit", metavar="PATH",
             help="Explicitly specify a file or directory to scan."
         )
         parser.add_argument(
-            "--realtime", choices=["start", "stop"], 
-            help="Control real-time protection service (if supported)."
+            "--realtime", choices=["start", "stop"],
+            help="Control real-time protection service."
         )
         parser.add_argument(
             "--add-signature", metavar="HASH",
             help="Add a new malware signature (hash) to the database."
         )
         parser.add_argument(
-            "--hash-type", choices=["md5", "sha256"], default="sha256", 
-            help="Specify hash type (md5 or sha256) for --add-signature. Default: sha256."
+            "--hash-type", choices=["md5", "sha256"], default="sha256",
+            help="Hash type for --add-signature. Default: sha256."
         )
         parser.add_argument(
-            "--auto-action", choices=["quarantine", "delete"], 
-            help="Automatic action for detected threats (use with caution): 'quarantine' or 'delete'."
+            "--auto-action", choices=["quarantine", "delete"],
+            help="Automatically act on detected threats (no prompt)."
         )
         parser.add_argument(
-            "--version", action="version", 
+            "--version", action="version",
             version=f"{config.app_name} v{config.version}"
         )
-        # --gui flag is handled by run_maldefender.py now.
-        # If no other CLI specific args are given, run_maldefender.py will try to launch GUI.
+        parser.add_argument(
+            "--behavior", choices=["start", "stop"], 
+            help="Control behavior monitor."
+            )
 
-        # Handle case where only script name is run (no args) or --gui is passed
-        # This logic is now primarily in run_maldefender.py
-        if not args and not sys.stdin.isatty(): # If running non-interactively with no args, show help
+        # Non-interactive + no args → show help and exit early
+        if not args and not sys.stdin.isatty():
             parser.print_help()
             return
-        
-        # If args is empty and it's an interactive terminal, it implies GUI should launch (handled by main script)
-        # If args are present, parse them.
-        if not args and sys.stdin.isatty(): # For interactive, no args means GUI
-            # This path should ideally be handled by the main launcher (run_maldefender.py)
-            # which decides to launch GUI or CLI. If CLI is explicitly run with no args:
-            self.logger.log("No CLI arguments provided. For GUI, run without CLI specific commands.", "INFO")
+        # Interactive + no args → show help (GUI is launched via run_malvex.py, not here)
+        if not args and sys.stdin.isatty():
+            self.logger.log("No CLI arguments provided. See options below.", "INFO")
             parser.print_help()
             return
 
-
-        parsed_args = parser.parse_args(args=args) # Pass the argument list here
-        
+        parsed = parser.parse_args(args=args)
         action_taken = False
 
-        if parsed_args.add_signature:
+        # ---- Signature management ----
+        if parsed.add_signature:
             action_taken = True
-            signature = parsed_args.add_signature.strip().lower()
-            hash_type = parsed_args.hash_type.lower()
-            
-            # Basic validation for hash length
-            valid_hash = True
-            if hash_type == "md5" and len(signature) != 32:
-                self.logger.log("Invalid MD5 hash format. Must be 32 hex characters.", "ERROR")
-                valid_hash = False
-            elif hash_type == "sha256" and len(signature) != 64:
-                self.logger.log("Invalid SHA256 hash format. Must be 64 hex characters.", "ERROR")
-                valid_hash = False
-            if valid_hash and not all(c in "0123456789abcdef" for c in signature):
-                 self.logger.log("Invalid hash characters. Must be hexadecimal.", "ERROR")
-                 valid_hash = False
+            signature = parsed.add_signature.strip().lower()
+            hash_type = parsed.hash_type.lower()
 
-            if valid_hash:
+            valid = True
+            if hash_type == "md5" and len(signature) != 32:
+                self.logger.log("Invalid MD5: must be 32 hex chars.", "ERROR")
+                valid = False
+            elif hash_type == "sha256" and len(signature) != 64:
+                self.logger.log("Invalid SHA256: must be 64 hex chars.", "ERROR")
+                valid = False
+            if valid and not all(c in "0123456789abcdef" for c in signature):
+                self.logger.log("Invalid hash characters: expected hexadecimal.", "ERROR")
+                valid = False
+
+            if valid:
                 if signature in self.scanner.sig_db.signatures[hash_type]:
                     self.logger.log(f"{hash_type.upper()} signature already exists.", "INFO")
                 else:
@@ -104,99 +130,191 @@ class CommandLineInterface:
             else:
                 self.logger.log("Failed to add signature due to invalid format.", "ERROR")
 
-
-        if parsed_args.realtime:
+        # ---- Real-time control ----
+        if parsed.realtime:
             action_taken = True
-            if parsed_args.realtime == "start":
-                self.logger.log("Attempting to start real-time protection via CLI...", "INFO")
+            if parsed.realtime == "start":
+                self.logger.log("Starting real-time protection...", "INFO")
                 self.scanner.start_realtime_protection()
-                # Log status based on config.realtime_enabled
+                self.scanner.start_behavior_monitor(self._notify_behavior_cli)
                 if config.realtime_enabled:
-                     self.logger.log("Real-time protection started successfully.", "INFO")
+                    self.logger.log("Real-time protection started.", "INFO")
                 else:
-                     self.logger.log("Real-time protection failed to start or no valid paths. Check logs.", "WARNING")
-
-            elif parsed_args.realtime == "stop":
-                self.logger.log("Attempting to stop real-time protection via CLI...", "INFO")
+                    self.logger.log("Real-time failed to start or no valid paths. Check logs.", "WARNING")
+            else:
+                self.logger.log("Stopping real-time protection...", "INFO")
                 self.scanner.stop_realtime_protection()
+                self.scanner.stop_behavior_monitor()
                 self.logger.log("Real-time protection stopped.", "INFO")
-        
-        # Determine scan path from explicit --scan or positional argument
-        scan_target_path_str = parsed_args.scan_path_explicit or parsed_args.path_to_scan
-        
-        if scan_target_path_str:
+
+        # ---- Scanning ----
+        scan_target_str = parsed.scan_path_explicit or parsed.path_to_scan
+        if scan_target_str:
             action_taken = True
-            scan_target_path = Path(scan_target_path_str).resolve() # Resolve to absolute path
-            
-            if not scan_target_path.exists():
-                self.logger.log(f"Scan path does not exist: {scan_target_path}", "ERROR")
+            scan_target = Path(scan_target_str).resolve()
+            if not scan_target.exists():
+                self.logger.log(f"Scan path does not exist: {scan_target}", "ERROR")
                 return
 
-            self.logger.log(f"Starting scan on: {scan_target_path}", "INFO")
-            if parsed_args.auto_action:
-                self.logger.log(f"Automatic action for threats: {parsed_args.auto_action}", "WARNING")
+            self.logger.log(f"Starting scan on: {scan_target}", "INFO")
+            if parsed.auto_action:
+                self.logger.log(f"Automatic action for threats: {parsed.auto_action}", "WARNING")
 
-            if scan_target_path.is_file():
-                result = self.scanner.scan_file(scan_target_path, parsed_args.auto_action)
+            if scan_target.is_file():
+                result = self.scanner.scan_file(scan_target, auto_action=parsed.auto_action)
                 self.print_scan_result_cli(result)
-                self.logger.log(f"Scan of file {scan_target_path} complete. Stats: {self.scanner.scan_stats}", "INFO")
-            elif scan_target_path.is_dir():
-                results = self.scanner.scan_directory(scan_target_path) # auto_action is handled by scan_file within scan_directory
+                # Prompt only if infected and no auto-action was given
+                if result.get("status") == "infected" and not parsed.auto_action:
+                    self._prompt_actions_cli([result])
+                self.logger.log(f"Scan of file {scan_target} complete. Stats: {self.scanner.scan_stats}", "INFO")
+
+            elif scan_target.is_dir():
+                results = self.scanner.scan_directory(scan_target)
                 self.print_scan_summary_cli(results)
-                self.logger.log(f"Scan of directory {scan_target_path} complete. Overall Stats: {self.scanner.scan_stats}", "INFO")
+                # Prompt only if infections and no auto-action was given
+                if not parsed.auto_action:
+                    infected = [r for r in results if r.get("status") == "infected"]
+                    self._prompt_actions_cli(infected)
+                self.logger.log(f"Scan of directory {scan_target} complete. Overall Stats: {self.scanner.scan_stats}", "INFO")
             else:
-                self.logger.log(f"Scan path is neither a file nor a directory: {scan_target_path}", "ERROR")
-        
-        if not action_taken and not (len(args) == 1 and args[0] == "--gui"): # If no specific CLI action was performed by *this* module
-            # This case should ideally be caught by run_maldefender.py to launch GUI
-            # If CLI is explicitly run (e.g. python -m maldefender.cli) with no args:
+                self.logger.log(f"Scan path is neither a file nor a directory: {scan_target}", "ERROR")
+
+        # ---- No actionable flags ----
+        if not action_taken:
             self.logger.log("No specific CLI action requested. Use --help for options.", "INFO")
-            parser.print_help(sys.stderr) # Print help to stderr if no action
+            parser.print_help(sys.stderr)
 
-    def print_scan_result_cli(self, result: Dict):
+    # --------- Helpers ---------
+    def _prompt_actions_cli(self, infected_results: List[Dict]) -> None:
+        """Interactive prompt per infected item when --auto-action is not provided."""
+        if not infected_results:
+            return
+
+        for res in infected_results:
+            file_path = Path(str(res["file"]))
+            is_archive = file_path.suffix.lower() in config.archive_types
+
+            # Build details line
+            if is_archive:
+                detail = f"{file_path.name} (archive contains threat(s))"
+            else:
+                t = (res.get("threats") or [{}])[0]
+                ht = t.get("hash_types") or [t.get("hash_type", "N/A")]
+                if not isinstance(ht, list):
+                    ht = [ht]
+                detail = f"{file_path.name} | Type(s): {', '.join(ht)}"
+
+            while True:
+                self.logger.log(f"\nThreat detected: {file_path}\n  {detail}", "WARNING")
+                choice = input("Action? [Q]uarantine / [D]elete / [I]gnore (default=I): ").strip().lower()
+                if choice in {"q", "d", "i", ""}:
+                    break
+                print("Please enter Q, D, I, or press Enter for Ignore.")
+
+            if choice in {"", "i"}:
+                self.logger.log(f"Ignored by user: {file_path}", "INFO")
+                continue
+
+            if choice == "q":
+                ok, _ = self.scanner.quarantine_path(file_path)  # FIX
+                if ok:
+                    self.logger.log(f"Quarantined: {file_path}", "WARNING")
+                else:
+                    self.logger.log(f"Failed to quarantine: {file_path}", "ERROR")
+            elif choice == "d":
+                ok, _ = self.scanner.delete_path(file_path)  # FIX
+                if ok:
+                    self.logger.log(f"Deleted: {file_path}", "WARNING")
+                else:
+                    self.logger.log(f"Failed to delete: {file_path}", "ERROR")
+                    
+    def _notify_behavior_cli(self, incident: Dict[str, Any]) -> None:
+        """CLI prompt when behavior incident fires."""
+        proc = incident.get("process", {})
+        exe = proc.get("exe") or "Unknown"
+        pid = incident.get("pid")
+        score = incident.get("score", 0)
+        reasons = ", ".join([f"{rh['rule_id']}({rh['weight']})" for rh in incident.get("rule_hits", [])])
+
+        self.logger.log(f"\n[BEHAVIOR] Incident score={score} PID={pid} EXE={exe}\n  Rules: {reasons}", "WARNING")
+
+        while True:
+            choice = input("[BEHAVIOR] Action? [K]ill / [Q]uarantine drops / [R]ollback recent / [I]gnore (default=I): ").strip().lower()
+            if choice in {"k", "q", "r", "i", ""}:
+                break
+            print("Please enter K, Q, R, I or Enter for Ignore.")
+
+        try:
+            if choice == "k":
+                try:
+                    import psutil
+                    psutil.Process(int(pid)).kill()
+                    self.logger.log(f"[BEHAVIOR] Killed PID {pid}", "WARNING")
+                except Exception as e:
+                    self.logger.log(f"[BEHAVIOR] Kill failed for PID {pid}: {e}", "ERROR")
+            elif choice == "q":
+                # quarantine recently created executables/scripts
+                cnt = self.scanner.behavior.rollback.rollback() if self.scanner.behavior else 0
+                self.logger.log(f"[BEHAVIOR] Quarantined/removed {cnt} recent files (rollback).", "WARNING")
+            elif choice == "r":
+                cnt = self.scanner.behavior.rollback.rollback() if self.scanner.behavior else 0
+                self.logger.log(f"[BEHAVIOR] Rollback handled {cnt} files.", "WARNING")
+            else:
+                self.logger.log(f"[BEHAVIOR] Ignored incident for PID {pid}", "INFO")
+        except Exception as e:
+            self.logger.log(f"[BEHAVIOR] action error: {e}", "ERROR")
+
+    # --------- Output formatting ---------
+    def print_scan_result_cli(self, result: Dict) -> None:
         """Print a single scan result to the console."""
-        status_icon = "🦠 INFECTED" if result["status"] == "infected" else \
-                      ("⚠️ ERROR" if "error" in result["status"] else \
-                      ("❔ SKIPPED" if "skipped" in result["status"] else "✅ CLEAN"))
-        
-        self.logger.log(f"{status_icon} - {result['file']}", "RESULT") # Using a custom level for direct output
-        
-        if result["status"] == "infected" and result.get("threats"):
+        status = result.get("status", "clean")
+        status_icon = (
+            "🦠 INFECTED" if status == "infected" else
+            ("⚠️ ERROR" if "error" in status else
+             ("❔ SKIPPED" if "skipped" in status else "✅ CLEAN"))
+        )
+        self.logger.log(f"{status_icon} - {result['file']}", "RESULT")
+
+        if status == "infected" and result.get("threats"):
             for threat in result["threats"]:
-                if "archive" in threat:  # Threat found inside an archive
-                    hash_types = threat.get("hash_types") or [threat.get("hash_type", "N/A")]
-                    log_msg = (f"  ➡️ Threat in archive '{Path(threat['archive']).name}': "
-                               f"File: '{threat['file']}', Type(s): {', '.join(hash_types)} Match")
-                else:  # Threat is the file itself
-                    hash_types = threat.get("hash_types") or [threat.get("hash_type", "N/A")]
-                    log_msg = f"  ➡️ Threat Type(s): {', '.join(hash_types)} Match"
-                self.logger.log(log_msg, "RESULT")
-        
+                # Normalize hash_types
+                hash_types = threat.get("hash_types")
+                if not hash_types:
+                    ht = threat.get("hash_type")
+                    hash_types = ht if isinstance(ht, list) else ([ht] if ht else [])
+                hash_types = [str(x) for x in hash_types]
+
+                if "archive" in threat:
+                    msg = (f"  ➡️ Threat in archive '{Path(threat['archive']).name}': "
+                           f"File: '{threat['file']}', Type(s): {', '.join(hash_types)} Match")
+                else:
+                    msg = f"  ➡️ Threat Type(s): {', '.join(hash_types)} Match"
+                self.logger.log(msg, "RESULT")
+
         if result.get("action_taken"):
-            self.logger.log(f"  ➡️ Action: {result['action_taken'].capitalize()}", "RESULT")
+            self.logger.log(f"  ➡️ Action: {str(result['action_taken']).capitalize()}", "RESULT")
 
-    def print_scan_summary_cli(self, results: List[Dict]):
+    def print_scan_summary_cli(self, results: List[Dict]) -> None:
         """Print a summary of multiple scan results to the console."""
-        
-        infected_files_details: List[Dict] = []
+        infected: List[Dict] = []
         for r in results:
-            if r["status"] == "infected":
-                infected_files_details.append(r)
-            elif "error" in r["status"] or "skipped" in r["status"]: # Also log errors/skipped files in summary
-                 self.print_scan_result_cli(r)
+            if r.get("status") == "infected":
+                infected.append(r)
+            elif "error" in r.get("status", "") or "skipped" in r.get("status", ""):
+                self.print_scan_result_cli(r)
 
-
-        stats = self.scanner.scan_stats # Use the consolidated stats from MalwareScanner
+        stats = self.scanner.scan_stats
         self.logger.log("\n📊 Scan Summary:", "INFO")
         self.logger.log(f"  Total Items Processed (files/archives): {stats['files_scanned']}", "INFO")
         self.logger.log(f"  Archives Scanned: {stats['archives_scanned']}", "INFO")
         self.logger.log(f"  Total Threats Detected: {stats['threats_found']}", "INFO")
         self.logger.log(f"  Scan Errors: {stats['errors']}", "INFO")
 
-        if stats['threats_found'] > 0:
+        if infected:
             self.logger.log("\n🦠 Infected Item Details:", "WARNING")
-            for res in infected_files_details:
-                self.print_scan_result_cli(res) # This will log details for each infected item
+            for res in infected:
+                self.print_scan_result_cli(res)
+
 
 if __name__ == "__main__":
     CommandLineInterface().run()

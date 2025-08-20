@@ -4,7 +4,7 @@ import shutil
 import zipfile
 import rarfile # Ensure rarfile is handled in main installation check
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 from .app_config import config
 from .app_logger import Logger
@@ -43,8 +43,11 @@ class ArchiveScanner:
                     with rarfile.RarFile(archive_path, 'r') as rar_file:
                         rar_file.extractall(temp_dir)
                     extracted = True
-                except rarfile. behöverCAuthenticationError:
-                    self.logger.log(f"Archive {archive_path} is password protected and cannot be scanned.", "WARNING")
+                except rarfile.PasswordRequired:
+                    self.logger.log(
+                        f"Archive {archive_path} is password protected and cannot be scanned.",
+                        "WARNING",
+                    )
                 except rarfile.RarCannotExec as e: # Handles missing unrar utility
                     self.logger.log(f"Cannot extract RAR {archive_path}. 'unrar' utility might be missing or not in PATH: {e}", "ERROR")
                 except Exception as e: # Catch other rarfile specific errors

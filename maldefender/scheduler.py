@@ -1,23 +1,14 @@
-import os
+import os, sys, shlex
 from crontab import CronTab
 
 def schedule_scan(time_str, scan_path):
-    """
-    Schedule a scan at the specified time (24h format: 'HH:MM') using cron.
-    """
     hour, minute = map(int, time_str.split(":"))
     cron = CronTab(user=True)
-
-    # Absolute path to run_maldefender.py
-    project_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'run_maldefender.py'))
-    command = f'python3 {project_path} --scan {scan_path}'
-
-    # Remove previous jobs
-    cron.remove_all(comment='maldefender-scan')
-
-    job = cron.new(command=command, comment='maldefender-scan')
-    job.minute.on(minute)
-    job.hour.on(hour)
+    project_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'run_malvex.py'))
+    py = shlex.quote(sys.executable)
+    cmd = f'{py} {shlex.quote(project_path)} --scan {shlex.quote(scan_path)}'
+    cron.remove_all(comment='malvex-scan')
+    job = cron.new(command=cmd, comment='malvex-scan')
+    job.minute.on(minute); job.hour.on(hour)
     cron.write()
-
-    print(f"[+] Scheduled scan daily at {time_str} for folder: {scan_path}")
+    print(f"[+] Scheduled daily {time_str} for: {scan_path}")

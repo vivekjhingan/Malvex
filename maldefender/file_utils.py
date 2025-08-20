@@ -1,4 +1,4 @@
-# maldefender/file_utils.py
+# malvex/file_utils.py
 import hashlib
 from pathlib import Path
 from typing import Tuple, Optional
@@ -9,12 +9,14 @@ class FileHasher:
     @staticmethod
     def get_hashes(file_path: Path) -> Tuple[Optional[str], Optional[str]]:
         """Calculate MD5 and SHA256 hashes of a file"""
+
         try:
             md5_hash = hashlib.md5()
             sha256_hash = hashlib.sha256()
             
+            _CHUNK = 1024 * 1024  # 1 MiB
             with open(file_path, "rb") as f:
-                for chunk in iter(lambda: f.read(8192), b""): # Read in chunks
+                for chunk in iter(lambda: f.read(_CHUNK), b""): # Read in chunks
                     md5_hash.update(chunk)
                     sha256_hash.update(chunk)
             
