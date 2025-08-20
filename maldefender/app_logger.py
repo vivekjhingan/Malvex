@@ -1,7 +1,7 @@
-# malvex/app_logger.py
+# maldefender/app_logger.py
 from datetime import datetime
 from typing import Callable, Optional
-from pathlib import Path
+
 from .app_config import config
 
 class Logger:
@@ -9,36 +9,25 @@ class Logger:
     
     def __init__(self, gui_callback: Optional[Callable[[str, str], None]] = None):
         self.gui_callback = gui_callback
-
-    from pathlib import Path
-
+    
     def log(self, message: str, level: str = "INFO"):
+        """Log a message"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"[{timestamp}] [{level}] {message}"
-
-        _MAX_LOG = 10 * 1024 * 1024
-        log_path = Path(config.log_file)
-
-        # Rotate before writing
+        
+        # Write to file
         try:
-            if log_path.exists() and log_path.stat().st_size > _MAX_LOG:
-                rotated = log_path.with_name(log_path.name + ".1")
-                if rotated.exists():
-                    rotated.unlink()
-                log_path.rename(rotated)
-        except Exception:
-            pass
-
-        try:
-            with open(log_path, "a", encoding="utf-8") as f:
+            with open(config.log_file, "a", encoding="utf-8") as f:
                 f.write(log_entry + "\n")
         except Exception as e:
-            print(f"Logging error: {e}")
-
+            print(f"Logging error: {e}") # Fallback to print if file logging fails
+        
+        # Send to GUI if available
         if self.gui_callback:
             try:
                 self.gui_callback(log_entry, level)
             except Exception as e:
-                print(f"GUI callback error: {e}")
+                print(f"GUI callback error: {e}") # Log if GUI callback fails
         else:
+            # If no GUI callback, print to console (useful for CLI mode or if GUI isn't ready)
             print(log_entry)

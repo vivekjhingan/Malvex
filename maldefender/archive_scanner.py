@@ -1,103 +1,96 @@
-import time, shutil, zipfile, rarfile
+# maldefender/archive_scanner.py
+import time
+import shutil
+import zipfile
+import rarfile # Ensure rarfile is handled in main installation check
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
+
 from .app_config import config
 from .app_logger import Logger
 from .signature_db import SignatureDatabase
 from .file_utils import FileHasher
 
-_MAX_ARCHIVE_FILES = 10_000
-_MAX_EXTRACT_BYTES = 1_000_000_000
-_MAX_FILE_BYTES = 200_000_000
-
 class ArchiveScanner:
+    """Archive scanning for zip, rar, and other compressed files"""
+    
     def __init__(self, logger: Logger, sig_db: SignatureDatabase):
         self.logger = logger
         self.sig_db = sig_db
-
-    @staticmethod
-    def _is_safe_member(base: Path, target: Path) -> bool:
-        try:
-            target.resolve().relative_to(base.resolve())
-            return True
-        except Exception:
-            return False
-
-    def _extract_zip_safely(self, zf: zipfile.ZipFile, dest: Path) -> bool:
-        total = 0
-        infos = zf.infolist()
-        if len(infos) > _MAX_ARCHIVE_FILES: return False
-        for info in infos:
-            member = Path(info.filename)
-            out = dest / member
-            if member.is_absolute() or any(p == ".." for p in member.parts) or not self._is_safe_member(dest, out):
-                return False
-            if info.file_size > _MAX_FILE_BYTES: return False
-            total += info.file_size
-            if total > _MAX_EXTRACT_BYTES: return False
-        zf.extractall(dest)
-        return True
-
-    def _extract_rar_safely(self, rf: rarfile.RarFile, dest: Path) -> bool:
-        total = 0
-        infos = rf.infolist()
-        if len(infos) > _MAX_ARCHIVE_FILES: return False
-        for info in infos:
-            member = Path(info.filename)
-            out = dest / member
-            if member.is_absolute() or any(p == ".." for p in member.parts) or not self._is_safe_member(dest, out):
-                return False
-            if info.file_size and info.file_size > _MAX_FILE_BYTES: return False
-            if info.file_size:
-                total += info.file_size
-                if total > _MAX_EXTRACT_BYTES: return False
-        rf.extractall(dest)
-        return True
-
+    
     def scan_archive(self, archive_path: Path) -> List[Dict]:
+        """Scan files inside archives"""
         threats: List[Dict] = []
-        temp_dir: Optional[Path] = None
+        temp_dir: Optional[Path] = None # Keep temp_dir optional
+        
         try:
-            base = config.base_dir / "temp_extract"
-            base.mkdir(parents=True, exist_ok=True)
-            temp_dir = base / str(int(time.time()))
+            # Create temporary extraction directory
+            # Ensure temp_extract base directory exists
+            temp_extract_base = config.base_dir / "temp_extract"
+            temp_extract_base.mkdir(parents=True, exist_ok=True)
+            temp_dir = temp_extract_base / str(int(time.time()))
             temp_dir.mkdir(parents=True, exist_ok=True)
-
+            
+            # Extract based on file type
+            file_suffix_lower = archive_path.suffix.lower()
             extracted = False
-            suf = archive_path.suffix.lower()
-            if suf == ".zip":
-                with zipfile.ZipFile(archive_path, 'r') as zf:
-                    extracted = self._extract_zip_safely(zf, temp_dir)
-            elif suf == ".rar":
+            if file_suffix_lower == ".zip":
+                with zipfile.ZipFile(archive_path, 'r') as zip_file:
+                    zip_file.extractall(temp_dir)
+                extracted = True
+            elif file_suffix_lower == ".rar":
                 try:
-                    with rarfile.RarFile(archive_path, 'r') as rf:
-                        extracted = self._extract_rar_safely(rf, temp_dir)
-                except rarfile.PasswordRequired:
-                    self.logger.log(f"Password-protected archive: {archive_path}", "WARNING")
-                except rarfile.RarCannotExec as e:
-                    self.logger.log(f"'unrar' missing for {archive_path}: {e}", "ERROR")
+                    with rarfile.RarFile(archive_path, 'r') as rar_file:
+                        rar_file.extractall(temp_dir)
+                    extracted = True
+                except rarfile. behöverCAuthenticationError:
+                    self.logger.log(f"Archive {archive_path} is password protected and cannot be scanned.", "WARNING")
+                except rarfile.RarCannotExec as e: # Handles missing unrar utility
+                    self.logger.log(f"Cannot extract RAR {archive_path}. 'unrar' utility might be missing or not in PATH: {e}", "ERROR")
+                except Exception as e: # Catch other rarfile specific errors
+                    self.logger.log(f"Error extracting RAR {archive_path}: {e}", "ERROR")
+
+            # Add more archive types if needed (e.g., .7z, .tar.gz)
+            # For .7z: requires py7zr, import py7zr
+            # For .tar, .tar.gz, .tar.bz2: requires tarfile, import tarfile
+
             else:
-                self.logger.log(f"Unsupported archive type: {archive_path}", "INFO")
-                return threats
+                self.logger.log(f"Unsupported archive type: {archive_path.suffix} for {archive_path}")
+                return threats # Return empty list if not extracted
+            
+            if not extracted: # If extraction failed or was skipped
+                 return threats
 
-            if not extracted:
-                return threats
-
-            for p in temp_dir.rglob("*"):
-                if p.is_file():
-                    md5_hash, sha256_hash = FileHasher.get_hashes(p)
-                    if md5_hash and sha256_hash:
-                        is_mal, hash_types = self.sig_db.is_malicious(md5_hash, sha256_hash)
-                        if is_mal:
+            # Scan extracted files
+            for extracted_file_path in temp_dir.rglob("*"):
+                if extracted_file_path.is_file():
+                    # Pass the full path to get_hashes
+                    md5_hash, sha256_hash = FileHasher.get_hashes(extracted_file_path)
+                    if md5_hash and sha256_hash: # Ensure hashes were obtained
+                        is_malicious, hash_type = self.sig_db.is_malicious(md5_hash, sha256_hash)
+                        if is_malicious:
                             threats.append({
-                                "file": str(p.relative_to(temp_dir)),
+                                "file": str(extracted_file_path.relative_to(temp_dir)), # Store relative path within archive
                                 "archive": str(archive_path),
-                                "hash_types": hash_types,
+                                "hash_type": hash_type,
                                 "md5": md5_hash,
-                                "sha256": sha256_hash,
+                                "sha256": sha256_hash
                             })
+        
+        except FileNotFoundError:
+            self.logger.log(f"Archive file not found: {archive_path}", "ERROR")
+        except zipfile.BadZipFile:
+            self.logger.log(f"Invalid or corrupted ZIP file: {archive_path}", "ERROR")
+        # rarfile exceptions are handled above
+        except Exception as e:
+            self.logger.log(f"Error scanning archive {archive_path}: {e}", "ERROR")
+        
         finally:
+            # Clean up temporary files
             if temp_dir and temp_dir.exists():
-                try: shutil.rmtree(temp_dir)
-                except Exception as e: self.logger.log(f"Temp cleanup failed {temp_dir}: {e}", "WARNING")
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception as e:
+                    self.logger.log(f"Error cleaning temp files at {temp_dir}: {e}", "WARNING")
+        
         return threats
