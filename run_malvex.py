@@ -68,8 +68,8 @@ def main():
 
     # Step 3: Import our application modules (now that packages should be present)
     try:
-        from malvex.cli import CommandLineInterface
-        from malvex.app_config import config # For version info or direct config access if needed
+        from maldefender.cli import CommandLineInterface
+        from maldefender.app_config import config # For version info or direct config access if needed
         # GUI import is conditional
     except ImportError as e:
         print(f"Fatal error: Could not import application components: {e}")
@@ -83,7 +83,7 @@ def main():
             try:
                 # GUI related imports should be here, after package checks.
                 import tkinter as tk # Re-import for clarity in this block
-                from malvex.gui import AntivirusGUI
+                from maldefender.gui import AntivirusGUI
                 
                 root = tk.Tk()
                 app_gui = AntivirusGUI(root)
