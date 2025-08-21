@@ -24,9 +24,9 @@ class RealTimeMonitor(FileSystemEventHandler):
     def __init__(self, scanner_callback: Callable[[Path], None]):
         super().__init__()
         self.scanner_callback = scanner_callback
-        self.behavior = behavior
-        self.observers: List[Observer] = []
-        self._timers: Dict[Path, threading.Timer] = {}
+        self.behavior = BehaviorEngine()  # Initialize BehaviorEngine
+        self.observers = []  # type: List[Observer]
+        self._timers = {}    # type: Dict[Path, threading.Timer]
         self._lock = threading.Lock()
 
     def _ignored(self, p: Path) -> bool:
@@ -68,7 +68,7 @@ class RealTimeMonitor(FileSystemEventHandler):
         first = stat_tuple(p)
         if not first:
             return
-        time.sleep(_STABLE_WAIT_MS / 1000.0)
+        time.sleep(_STABLE_WAIT_MS / 1000.0)  # Convert milliseconds to seconds
         second = stat_tuple(p)
         if first == second:
             try:
