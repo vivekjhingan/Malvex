@@ -62,7 +62,7 @@ python run_malvex.py --help
 
 >  **Tip**: Run with appropriate permissions to scan protected directories effectively.
 
-## 🛠 Project Structure
+## Project Structure
 
 ```bash
 run_malvex.py
