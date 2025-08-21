@@ -8,6 +8,8 @@ import os
 from .app_config import config
 from .app_logger import Logger
 from .malware_scanner import MalwareScanner
+from typing import Dict, Any
+
 
 # --- THEME COLORS AND FONTS ---
 PRIMARY_BG = "#121212"
@@ -213,10 +215,25 @@ class AntivirusGUI:
         self.scanner.scanning = False
         self.scan_status_label.config(text="Status: Cancelling...")
 
+    def notify_behavior_gui(self, incident: Dict[str, Any]) -> None:
+        """Display a warning for behavior incidents."""
+        proc = incident.get("process", {})
+        exe = proc.get("exe") or "Unknown"
+        score = incident.get("score", 0)
+        self.logger.log(f"[BEHAVIOR] Incident score={score} exe={exe}", "WARNING")
+        try:
+            messagebox.showwarning(
+                "Behavior Alert",
+                f"Suspicious behavior detected:\n{exe}\nScore: {score}",
+            )
+        except Exception:
+            pass
+
     def toggle_realtime(self):
         if self.realtime_status.get():
             try:
                 self.scanner.stop_realtime_protection()
+                self.scanner.stop_behavior_monitor()
                 self.realtime_status.set(False)
                 self.realtime_label.config(text="Disabled")
                 self.toggle_button.config(text="Enable")
@@ -226,6 +243,11 @@ class AntivirusGUI:
         else:
             try:
                 self.scanner.start_realtime_protection()
+                # Also start behavior monitor for FS events
+                try:
+                    self.scanner.start_behavior_monitor(self.notify_behavior_gui)
+                except Exception as e:
+                    self.logger.log(f"Behavior monitor start failed: {e}", "ERROR")
                 self.realtime_status.set(True)
                 self.realtime_label.config(text="Enabled")
                 self.toggle_button.config(text="Disable")
@@ -373,6 +395,11 @@ class AntivirusGUI:
 
     def on_close(self):
         if messagebox.askokcancel("Exit Malvex", "Are you sure you want to quit?"):
+            try:
+                self.scanner.stop_realtime_protection()
+                self.scanner.stop_behavior_monitor()
+            except Exception:
+                pass
             self.root.destroy()
 
 __all__ = ["MalvexGUI"]

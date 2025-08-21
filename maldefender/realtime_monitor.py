@@ -2,11 +2,17 @@
 import time
 import threading
 from pathlib import Path
-from typing import List, Callable, Dict
+from typing import List, Callable, Dict, Optional
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileModifiedEvent, FileCreatedEvent
+from watchdog.events import (
+    FileSystemEventHandler,
+    FileModifiedEvent,
+    FileCreatedEvent,
+    FileDeletedEvent,
+)
 
 from .app_config import config
+from .behavior_engine import BehaviorEngine
 
 _IGNORE_GLOBS = {"~$*", "*.part", "*.crdownload", "*.tmp", ".*.swp", ".*.swx", ".*.swp", ".*.tmp"}
 _DEBOUNCE_MS = 750
@@ -18,6 +24,7 @@ class RealTimeMonitor(FileSystemEventHandler):
     def __init__(self, scanner_callback: Callable[[Path], None]):
         super().__init__()
         self.scanner_callback = scanner_callback
+        self.behavior = behavior
         self.observers: List[Observer] = []
         self._timers: Dict[Path, threading.Timer] = {}
         self._lock = threading.Lock()
@@ -72,11 +79,30 @@ class RealTimeMonitor(FileSystemEventHandler):
 
     def on_created(self, event: FileCreatedEvent):
         if not event.is_directory:
-            self._schedule_scan(Path(event.src_path))
+            p = Path(event.src_path)
+            if self.behavior:
+                try:
+                    self.behavior.ingest_fs_create(p)
+                except Exception:
+                    pass
+            self._schedule_scan(p)
 
     def on_modified(self, event: FileModifiedEvent):
         if not event.is_directory:
-            self._schedule_scan(Path(event.src_path))
+            p = Path(event.src_path)
+            if self.behavior:
+                try:
+                    self.behavior.ingest_fs_modify(p)
+                except Exception:
+                    pass
+            self._schedule_scan(p)
+
+    def on_deleted(self, event: FileDeletedEvent):
+        if not event.is_directory and self.behavior:
+            try:
+                self.behavior.ingest_fs_delete(Path(event.src_path))
+            except Exception:
+                pass
 
     def start_monitoring(self, paths: List[str]):
         self.stop_monitoring()

@@ -225,17 +225,19 @@ class YaraScanner:
         """
         Resolve a rules path in this priority:
           1) Explicit path from config.yara_rules_file if it exists.
-          2) Project-relative fallback malvex/yara_rules/malvex_rules.yar
+          2) Project-relative fallback maldefender/yara_rules/(malvex_rules|maldefender_rules).yar
         """
         try:
             # 1) Configured
             if self.rules_path and Path(self.rules_path).exists():
                 return Path(self.rules_path)
 
-            # 2) Project default
-            project_default = Path(__file__).resolve().parent / "yara_rules" / "malvex_rules.yar"
-            if project_default.exists():
-                return project_default
+            # 2) Project defaults
+            project_dir = Path(__file__).resolve().parent / "yara_rules"
+            for fname in ("malvex_rules.yar", "maldefender_rules.yar"):
+                candidate = project_dir / fname
+                if candidate.exists():
+                    return candidate
         except Exception:
             pass
         return None
