@@ -21,12 +21,17 @@ _STABLE_WAIT_MS = 400
 class RealTimeMonitor(FileSystemEventHandler):
     """Real-time file system monitoring with debounce & stability check."""
 
-    def __init__(self, scanner_callback: Callable[[Path], None]):
+    def __init__(
+        self,
+        scanner_callback: Callable[[Path], None],
+        behavior: Optional[BehaviorEngine] = None,
+    ):
         super().__init__()
         self.scanner_callback = scanner_callback
-        self.behavior = BehaviorEngine()  # Initialize BehaviorEngine
-        self.observers = []  # type: List[Observer]
-        self._timers = {}    # type: Dict[Path, threading.Timer]
+        # BehaviorEngine is optional; when provided it enables FS event ingestion
+        self.behavior = behavior
+        self.observers: List[Observer] = []
+        self._timers: Dict[Path, threading.Timer] = {}
         self._lock = threading.Lock()
 
     def _ignored(self, p: Path) -> bool:
