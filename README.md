@@ -2,7 +2,8 @@
 
 Malvex is a work-in-progress, cross-platform, modern antivirus and malware scanner with both GUI and CLI interfaces. It supports real-time protection, archive scanning, and custom signature management.
 
-🔗 Visit the Malvex Website**Website:** https://malvex.my.canva.site/malvex
+🔗 Visit the Malvex Website 
+**Website:** https://malvex.my.canva.site/malvex
 
 ## Features
 
