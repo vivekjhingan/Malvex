@@ -2,38 +2,9 @@
 
 Malvex is a work-in-progress, cross-platform, modern antivirus and malware scanner with both GUI and CLI interfaces. It supports real-time protection, archive scanning, and custom signature management.
 
-🔗 Visit the Malvex Website 
-**Website:** https://malvex.my.canva.site/malvex
-<p align="center">
-  <img src="https://raw.githubusercontent.com/vivekjhingan/Malvex/main/assets/logo.png" alt="Malvex" width="96" height="96" />
-</p>
+## 🌐 Website
+👉 [Visit the Malvex Website](https://malvex.my.canva.site/malvex)
 
-<h1 align="center">Malvex</h1>
-
-<p align="center">
-  Modern, cross-platform antivirus & malware scanner with a sleek GUI and fast CLI.
-</p>
-
-<p align="center">
-  <a href="https://malvex.my.canva.site/malvex" target="_blank">
-    <img alt="Website" src="https://img.shields.io/badge/Website-Live-blue">
-  </a>
-  <a href="https://github.com/vivekjhingan/Malvex/stargazers">
-    <img alt="GitHub stars" src="https://img.shields.io/github/stars/vivekjhingan/Malvex?style=flat">
-  </a>
-  <a href="https://github.com/vivekjhingan/Malvex/blob/main/LICENSE">
-    <img alt="License" src="https://img.shields.io/badge/License-MIT-green">
-  </a>
-  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-informational">
-  <img alt="Platforms" src="https://img.shields.io/badge/Platforms-Windows%20|%20Linux%20|%20macOS-lightgrey">
-</p>
-
----
-
-## Overview
-Malvex is a work-in-progress, modern antivirus and malware scanner with both GUI and CLI. It supports real-time protection, archive scanning, and custom signature management.
-
-**Live site:** https://malvex.my.canva.site/malvex
 ## Features
 
 - **Modern GUI** (Tkinter-based) and full-featured CLI  
