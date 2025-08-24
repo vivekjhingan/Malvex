@@ -147,6 +147,16 @@ class CommandLineInterface:
                 self.scanner.stop_behavior_monitor()
                 self.logger.log("Real-time protection stopped.", "INFO")
 
+        # ---- Behavior monitor control ----
+        if parsed.behavior:
+            action_taken = True
+            if parsed.behavior == "start":
+                self.logger.log("Starting behavior monitor...", "INFO")
+                self.scanner.start_behavior_monitor(self._notify_behavior_cli)
+            else:
+                self.logger.log("Stopping behavior monitor...", "INFO")
+                self.scanner.stop_behavior_monitor()
+
         # ---- Scanning ----
         scan_target_str = parsed.scan_path_explicit or parsed.path_to_scan
         if scan_target_str:

@@ -30,7 +30,7 @@ class Config:
         self.supported_types = {
             ".exe", ".dll", ".bat", ".cmd", ".ps1", ".sh", ".py", ".js",
             ".jar", ".apk", ".deb", ".rpm", ".msi", ".dmg", ".pkg",
-            ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"
+            ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".txt",
         }
         
         # Archive types
